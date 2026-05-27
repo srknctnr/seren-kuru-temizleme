@@ -445,11 +445,19 @@ function App() {
     setSync("saving");
     gsRead(token)
       .then(d => {
-        if (d.cx) setCx(d.cx);
+        const gsCx   = d.cx  || [];
+        const localCx = LC.get("cx") || [];
+        // GS yazma başarısız olmuşsa localStorage daha fazla müşteri içerebilir → onu koru
+        const useCx = localCx.length > gsCx.length ? localCx : gsCx;
+        setCx(useCx);
         if (d.tx) setTx(d.tx);
         if (d.cb) setCb(d.cb);
         if (typeof d.cfg !== "undefined") setCfg(migrateCfg(d.cfg));
-        LC.set("cx",d.cx||[]); LC.set("tx",d.tx||[]); LC.set("cb",d.cb||[]); LC.set("cfg",d.cfg);
+        LC.set("cx",useCx); LC.set("tx",d.tx||[]); LC.set("cb",d.cb||[]); LC.set("cfg",d.cfg);
+        // Yerel veri GS'den fazlaysa arka planda tekrar senkronize etmeyi dene
+        if (useCx.length > gsCx.length) {
+          gsWrite(token, {cx:useCx, tx:d.tx||[], cb:d.cb||[], cfg:d.cfg}).catch(()=>{});
+        }
         setSync("ok");
       })
       .catch(() => {
@@ -484,16 +492,25 @@ function App() {
     setCx(newCxData);
     clearTimeout(timer.current);
     setSync("saving");
+    // Her durumda localStorage'a kaydet — GS başarısız olsa bile veri bu tarayıcıda korunur
     LC.set("cx", newCxData); LC.set("tx", tx); LC.set("cb", cb); LC.set("cfg", cfg);
     try {
       await gsWrite(token, {cx:newCxData, tx, cb, cfg});
+      // Gerçekten yazıldı mı? Doğrula
+      const verify = await gsRead(token);
+      const gsSaved = (verify.cx || []).length >= newCxData.length;
+      if (!gsSaved) {
+        setSync("error");
+        setTimeout(() => setSync("idle"), 3000);
+        return {ok:false, localOnly:true, error:`Google Sheets veri sınırı aşıldı (${newCxData.length} müşteri çok büyük). Veriler bu tarayıcıda korunuyor.`};
+      }
       setSync("ok");
       setTimeout(() => setSync("idle"), 3000);
       return {ok:true};
     } catch(e) {
       setSync("error");
       setTimeout(() => setSync("idle"), 3000);
-      return {ok:false, error: e instanceof Error ? e.message : String(e)};
+      return {ok:false, localOnly:true, error: e instanceof Error ? e.message : String(e)};
     }
   }, [token, tx, cb, cfg]);
   const uCfg = d => {
@@ -792,14 +809,10 @@ function CList({ cx, tx, nav, uCx, importCx }) {
                       {importResult.skipped>0 && <p style={{color:C.m,fontSize:13,marginBottom:8}}>{importResult.skipped} kayıt atlandı (telefon zaten mevcut veya eksik bilgi).</p>}
                       {importResult.added>0 && (importResult.ok
                         ? <p style={{color:C.ok,fontSize:13}}>☁ Google Sheets'e kaydedildi.</p>
-                        : <div style={{background:C.errb,borderRadius:8,padding:"10px 12px",marginTop:4}}>
-                            <p style={{color:C.warn,fontSize:13,fontWeight:700,marginBottom:4}}>⚠ Google Sheets'e kaydedilemedi.</p>
-                            {importResult.error && <p style={{color:C.err,fontSize:11,fontFamily:"monospace",marginBottom:8,wordBreak:"break-all"}}>{importResult.error}</p>}
-                            <Btn onClick={async()=>{
-                              setImportResult(p=>({...p,saving:true}));
-                              const r = await importCx(importResult.pendingCx);
-                              setImportResult(p=>({...p,...r,saving:false}));
-                            }} variant="accent" size="sm">🔄 Tekrar Kaydet</Btn>
+                        : <div style={{background:C.warnb,borderRadius:8,padding:"10px 12px",marginTop:4,border:`1px solid ${C.warn}`}}>
+                            <p style={{color:C.warn,fontSize:13,fontWeight:700,marginBottom:4}}>⚠ Google Sheets'e yazılamadı</p>
+                            {importResult.error && <p style={{color:C.t,fontSize:12,marginBottom:8}}>{importResult.error}</p>}
+                            {importResult.localOnly && <p style={{color:C.ok,fontSize:12,fontWeight:700}}>✅ Bu tarayıcıda kaydedildi — sayfa yenilemede kaybolmayacak.</p>}
                           </div>
                       )}
                     </>

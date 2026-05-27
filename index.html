@@ -746,8 +746,8 @@ function CList({ cx, tx, nav, uCx, importCx }) {
           return "";
         };
         const existingPhones = new Set(cx.map(c=>c.phone.replace(/\s/g,"")));
-        let added = 0, skipped = 0;
-        const newCx = [...cx];
+        let skipped = 0;
+        const newCustomers = [];
         rows.forEach(row => {
           const name    = getField(row,"ad soyad","name","isim","ad");
           const phone   = getField(row,"telefon","phone","tel");
@@ -755,16 +755,36 @@ function CList({ cx, tx, nav, uCx, importCx }) {
           if (!name || !phone) { skipped++; return; }
           if (existingPhones.has(phone.replace(/\s/g,""))) { skipped++; return; }
           existingPhones.add(phone.replace(/\s/g,""));
-          newCx.push({id:uid(), createdAt:new Date().toISOString(), name, phone, address});
-          added++;
+          newCustomers.push({id:uid(), createdAt:new Date().toISOString(), name, phone, address});
         });
-        if (added > 0) {
-          setImportResult({added, skipped, saving:true, pendingCx:newCx});
-          const result = await importCx(newCx);
-          setImportResult({added, skipped, pendingCx:newCx, ...result});
-        } else {
+        if (newCustomers.length === 0) {
           setImportResult({added:0, skipped, ok:true});
+          return;
         }
+        const CHUNK = 200;
+        const totalChunks = Math.ceil(newCustomers.length / CHUNK);
+        let gsSaved = 0;
+        let currentCx = [...cx];
+        for (let i = 0; i < newCustomers.length; i += CHUNK) {
+          const chunk = newCustomers.slice(i, i + CHUNK);
+          currentCx = [...currentCx, ...chunk];
+          const chunkIdx = Math.floor(i / CHUNK) + 1;
+          setImportResult({added:newCustomers.length, gsSaved, savingChunk:chunkIdx, totalChunks, skipped, saving:true});
+          const result = await importCx(currentCx);
+          if (!result.ok) {
+            setImportResult({
+              added:newCustomers.length, gsSaved, skipped,
+              partial: gsSaved > 0,
+              localOnly:true,
+              error: gsSaved > 0
+                ? `${gsSaved} müşteri Google Sheets'e kaydedildi, kalan ${newCustomers.length - gsSaved} müşteri yalnızca bu tarayıcıda.`
+                : result.error
+            });
+            return;
+          }
+          gsSaved += chunk.length;
+        }
+        setImportResult({added:newCustomers.length, gsSaved, skipped, ok:true});
       } catch(err) {
         setImportResult({readError: err instanceof Error ? err.message : String(err)});
       }
@@ -811,16 +831,25 @@ function CList({ cx, tx, nav, uCx, importCx }) {
             ? <p style={{color:C.err,fontSize:13}}>❌ Dosya okunamadı: {importResult.readError}</p>
             : <div>
                 {importResult.saving
-                  ? <p style={{color:C.m,fontSize:14}}>⏳ {importResult.added} müşteri Google Sheets'e kaydediliyor…</p>
+                  ? <div>
+                      <p style={{color:C.m,fontSize:14,marginBottom:8}}>⏳ Google Sheets'e kaydediliyor… (parça {importResult.savingChunk}/{importResult.totalChunks})</p>
+                      <div style={{background:"#e8e8e8",borderRadius:6,height:8,overflow:"hidden"}}>
+                        <div style={{background:C.p,height:"100%",width:`${((importResult.gsSaved||0)/importResult.added)*100}%`,transition:"width 0.3s",borderRadius:6}}/>
+                      </div>
+                      <p style={{color:C.m,fontSize:12,marginTop:6}}>{importResult.gsSaved||0} / {importResult.added} müşteri kaydedildi</p>
+                    </div>
                   : <>
                       <p style={{color:C.ok,fontWeight:700,marginBottom:8}}>✅ {importResult.added} yeni müşteri eklendi.</p>
                       {importResult.skipped>0 && <p style={{color:C.m,fontSize:13,marginBottom:8}}>{importResult.skipped} kayıt atlandı (telefon zaten mevcut veya eksik bilgi).</p>}
                       {importResult.added>0 && (importResult.ok
-                        ? <p style={{color:C.ok,fontSize:13}}>☁ Google Sheets'e kaydedildi.</p>
+                        ? <p style={{color:C.ok,fontSize:13}}>☁ Tüm müşteriler Google Sheets'e kaydedildi.</p>
                         : <div style={{background:C.warnb,borderRadius:8,padding:"10px 12px",marginTop:4,border:`1px solid ${C.warn}`}}>
-                            <p style={{color:C.warn,fontSize:13,fontWeight:700,marginBottom:4}}>⚠ Google Sheets'e yazılamadı</p>
+                            {importResult.partial
+                              ? <p style={{color:C.warn,fontSize:13,fontWeight:700,marginBottom:4}}>⚠ Kısmen kaydedildi</p>
+                              : <p style={{color:C.warn,fontSize:13,fontWeight:700,marginBottom:4}}>⚠ Google Sheets'e yazılamadı</p>
+                            }
                             {importResult.error && <p style={{color:C.t,fontSize:12,marginBottom:8}}>{importResult.error}</p>}
-                            {importResult.localOnly && <p style={{color:C.ok,fontSize:12,fontWeight:700}}>✅ Bu tarayıcıda kaydedildi — sayfa yenilemede kaybolmayacak.</p>}
+                            {importResult.localOnly && <p style={{color:C.ok,fontSize:12,fontWeight:700}}>✅ Tüm müşteriler bu tarayıcıda kaydedildi — sayfa yenilemede kaybolmayacak.</p>}
                           </div>
                       )}
                     </>

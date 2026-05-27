@@ -1,0 +1,1670 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Seren Kuru Temizleme</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>* { box-sizing:border-box; margin:0; padding:0; } body { background:#F5F3EF; }</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+
+const GS_URL = "https://script.google.com/macros/s/AKfycbypQzbcSHjFrNPA9E3weXvYx4WD-ehIlZ8FQq8mJelZzEXAFGZv9rSzbAd-UNhm1OassQ/exec";
+
+const DEFAULT_USERS = [
+  { id:"u1", name:"Admin", username:"admin", password:"admin1", role:"admin", active:true },
+];
+
+// Her hizmetin kendi ürün listesi ve fiyatları var
+const DEFAULT_SVC = [
+  {
+    id:"s1", name:"Kuru Temizleme",
+    items:[
+      {id:"i101",name:"Takım Elbise",price:450},
+      {id:"i102",name:"Palto / Kaban",price:350},
+      {id:"i103",name:"Mont",price:300},
+      {id:"i104",name:"Blazer / Ceket",price:200},
+      {id:"i105",name:"Pantolon",price:120},
+      {id:"i106",name:"Gömlek",price:80},
+      {id:"i107",name:"Elbise",price:220},
+      {id:"i108",name:"Bluz",price:100},
+      {id:"i109",name:"Etek",price:120},
+      {id:"i110",name:"Kazak / Hırka",price:150},
+      {id:"i111",name:"Kravat",price:60},
+      {id:"i112",name:"Çanta",price:180},
+      {id:"i113",name:"Battaniye",price:250},
+      {id:"i114",name:"Yorgan",price:300},
+      {id:"i115",name:"Nevresim Takımı",price:200},
+      {id:"i116",name:"Diğer",price:0},
+    ]
+  },
+  {
+    id:"s2", name:"Yıkama",
+    items:[
+      {id:"i201",name:"Gömlek",price:50},
+      {id:"i202",name:"Pantolon",price:70},
+      {id:"i203",name:"Tişört",price:40},
+      {id:"i204",name:"Kazak / Hırka",price:80},
+      {id:"i205",name:"Eşofman Takımı",price:100},
+      {id:"i206",name:"Çamaşır (kg)",price:60},
+      {id:"i207",name:"Battaniye",price:150},
+      {id:"i208",name:"Yorgan",price:180},
+      {id:"i209",name:"Nevresim Takımı",price:120},
+      {id:"i210",name:"Diğer",price:0},
+    ]
+  },
+  {
+    id:"s3", name:"Ütü",
+    items:[
+      {id:"i301",name:"Gömlek",price:30},
+      {id:"i302",name:"Pantolon",price:35},
+      {id:"i303",name:"Takım Elbise",price:60},
+      {id:"i304",name:"Elbise",price:50},
+      {id:"i305",name:"Nevresim Takımı",price:70},
+      {id:"i306",name:"Diğer",price:0},
+    ]
+  },
+  {
+    id:"s4", name:"Leke Çıkarma",
+    items:[
+      {id:"i401",name:"Gömlek",price:60},
+      {id:"i402",name:"Pantolon",price:70},
+      {id:"i403",name:"Ceket",price:100},
+      {id:"i404",name:"Elbise",price:90},
+      {id:"i405",name:"Kravat",price:50},
+      {id:"i406",name:"Diğer",price:0},
+    ]
+  },
+  {
+    id:"s5", name:"Deri Temizleme",
+    items:[
+      {id:"i501",name:"Deri Ceket",price:400},
+      {id:"i502",name:"Deri Çanta",price:250},
+      {id:"i503",name:"Deri Ayakkabı",price:150},
+      {id:"i504",name:"Deri Kemer",price:80},
+      {id:"i505",name:"Deri Mont",price:450},
+      {id:"i506",name:"Diğer",price:0},
+    ]
+  },
+  {
+    id:"s6", name:"Halı Yıkama",
+    items:[
+      {id:"i601",name:"Halı (m²)",price:70},
+      {id:"i602",name:"Yolluk (m²)",price:50},
+      {id:"i603",name:"Kilim (m²)",price:60},
+      {id:"i604",name:"Diğer",price:0},
+    ]
+  },
+  {
+    id:"s7", name:"Perde Yıkama",
+    items:[
+      {id:"i701",name:"Tül Perde (m²)",price:60},
+      {id:"i702",name:"Stor Perde (m²)",price:80},
+      {id:"i703",name:"Fon Perde (m²)",price:90},
+      {id:"i704",name:"Diğer",price:0},
+    ]
+  },
+];
+
+let _inc = 0;
+const uid   = () => `${Date.now()}-${++_inc}-${Math.random().toString(36).slice(2,5)}`;
+const fmt   = n  => "₺" + (+(n)||0).toLocaleString("tr-TR", {minimumFractionDigits:2, maximumFractionDigits:2});
+const fdate = d  => d ? new Date(d).toLocaleDateString("tr-TR") : "—";
+const today = () => new Date().toISOString().slice(0,10);
+
+function calcTx(t) {
+  const items = t.items || [];
+  const total = items.reduce((s,i) => s + (i.qty||0)*(i.unitPrice||0)*(1-(i.discount||0)/100), 0);
+  const paid  = (t.payments||[]).reduce((s,p) => s + (p.amount||0), 0);
+  return { total, paid, balance:total-paid, deliveredCount:items.filter(i=>i.delivered).length, itemsCount:items.length };
+}
+
+function getCustSummary(cid, txs) {
+  let debt = 0, openCount = 0;
+  txs.filter(t=>t.customerId===cid).forEach(t => {
+    const {balance} = calcTx(t);
+    if (balance > 0.01) debt += balance;
+    if (t.status === "open") openCount++;
+  });
+  return { debt, openCount, total: txs.filter(t=>t.customerId===cid).length };
+}
+
+const LC = {
+  get: k => { try { const v=localStorage.getItem("seren_"+k); return v?JSON.parse(v):null; } catch { return null; } },
+  set: (k,v) => { try { localStorage.setItem("seren_"+k, JSON.stringify(v)); } catch {} },
+};
+
+function gsUrlWithToken(token) {
+  if (!token) return GS_URL;
+  return `${GS_URL}?token=${encodeURIComponent(token)}`;
+}
+
+async function gsRead(token) {
+  const r = await fetch(gsUrlWithToken(token));
+  const txt = await r.text();
+  const d = JSON.parse(txt || "{}");
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  if (d && d.ok === false) throw new Error(d.error || "Yetkisiz");
+  return d;
+}
+
+async function gsWrite(token, data) {
+  const r = await fetch(gsUrlWithToken(token), { method:"POST", body:JSON.stringify(data) });
+  const txt = await r.text();
+  const d = JSON.parse(txt || "{}");
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  if (d && d.ok === false) throw new Error(d.error || "Kaydetme hatası");
+  return d;
+}
+
+async function gsLogin(phone, password) {
+  const r = await fetch(GS_URL, {
+    method: "POST",
+    body: JSON.stringify({ action: "login", phone, password })
+  });
+  const txt = await r.text();
+  const d = JSON.parse(txt || "{}");
+  if (!r.ok || (d && d.ok === false)) throw new Error(d?.error || "Giriş başarısız");
+  return d; // {ok:true, token, role, phone, fullName}
+}
+
+function exportJSON(cx,tx,cb,cfg) {
+  const blob = new Blob([JSON.stringify({version:3,exportedAt:new Date().toISOString(),cx,tx,cb,cfg},null,2)],{type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `seren-yedek-${today()}.json`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// Eski cfg formatını yeni formata dönüştür
+function migrateCfg(cfg) {
+  if (!cfg) return { svc:DEFAULT_SVC, users:DEFAULT_USERS };
+  const svc = (cfg.svc && cfg.svc[0] && Array.isArray(cfg.svc[0].items)) ? cfg.svc : DEFAULT_SVC;
+  const users = (cfg.users && cfg.users.length > 0) ? cfg.users : DEFAULT_USERS;
+  return { ...cfg, svc, users };
+}
+
+
+// ── AUTH HELPERS ─────────────────────────────────────────────────────────────
+const SS = {
+  get: k => { try { const v=sessionStorage.getItem("seren_"+k); return v?JSON.parse(v):null; } catch { return null; } },
+  set: (k,v) => { try { sessionStorage.setItem("seren_"+k,JSON.stringify(v)); } catch {} },
+  del: k => { try { sessionStorage.removeItem("seren_"+k); } catch {} },
+};
+
+// ── LOGIN SCREEN ──────────────────────────────────────────────────────────────
+function Login({ onLogin }) {
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [err,      setErr]      = useState("");
+  const [showPw,   setShowPw]   = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const p = phone.trim();
+    const pw = password;
+    if (!p) { setErr("Telefon gerekli."); return; }
+    if (!pw || pw.length < 4) { setErr("Şifre hatalı."); return; }
+    setBusy(true);
+    setErr("");
+    try {
+      const d = await gsLogin(p, pw);
+      const role = d.role || d.userRole || "STAFF";
+      const fullName = d.fullName || d.name || p;
+      onLogin({
+        token: d.token,
+        user: { id: d.phone || p, name: fullName, role }
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Giriş başarısız");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <style>{CSS}</style>
+      <div style={{width:"100%",maxWidth:380}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{fontSize:52,marginBottom:10}}>👔</div>
+          <h1 style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:24,marginBottom:6}}>Seren Kuru Temizleme</h1>
+          <p style={{color:C.m,fontSize:14}}>Sisteme giriş yapın</p>
+        </div>
+        <div style={{background:C.s,borderRadius:16,padding:28,boxShadow:"0 4px 24px rgba(27,58,92,0.12)",border:`1px solid ${C.b}`}}>
+          <Field label="Telefon">
+            <input
+              value={phone}
+              onChange={e=>{setPhone(e.target.value);setErr("");}}
+              onKeyDown={e=>e.key==="Enter"&&submit()}
+              placeholder="5318221952"
+              inputMode="tel"
+              autoComplete="tel"
+            />
+          </Field>
+          <Field label="Şifre">
+            <div style={{position:"relative"}}>
+              <input type={showPw?"text":"password"} value={password}
+                onChange={e=>{setPassword(e.target.value);setErr("");}}
+                onKeyDown={e=>e.key==="Enter"&&submit()}
+                placeholder="Şifreniz" autoComplete="current-password"
+                style={{paddingRight:44}}/>
+              <button onClick={()=>setShowPw(v=>!v)}
+                style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.m,fontSize:16,padding:4}}>
+                {showPw?"🙈":"👁"}
+              </button>
+            </div>
+          </Field>
+          {err && <div style={{background:C.errb,color:C.err,borderRadius:8,padding:"8px 12px",fontSize:13,fontWeight:600,marginBottom:14}}>{err}</div>}
+          <Btn onClick={submit} variant="accent" size="lg" style={{width:"100%",justifyContent:"center",marginTop:4}} disabled={busy}>
+            🔐 Giriş Yap
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── COLORS ───────────────────────────────────────────────────────────────────
+const C = {
+  bg:"#F5F3EF", s:"#fff", p:"#1B3A5C", a:"#C9A84C",
+  ok:"#2A7D5A", okb:"#EBF7F1", err:"#B03025", errb:"#FDECEA",
+  warn:"#C55A00", warnb:"#FEF0E4", t:"#1C2733", m:"#6B7280", b:"#E4DDD4",
+};
+
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Nunito:wght@400;500;600;700;800&display=swap');
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#F5F3EF; }
+  input,select,textarea,button { font-family:'Nunito',sans-serif; font-size:14px; }
+  input,select,textarea { border:1.5px solid #E4DDD4; border-radius:8px; padding:9px 12px; background:#fff; color:#1C2733; width:100%; transition:border-color 0.15s; }
+  input:focus,select:focus,textarea:focus { outline:none; border-color:#1B3A5C; }
+  button { cursor:pointer; }
+  .hrow:hover { background:#F0EBE3 !important; cursor:pointer; }
+  @media(max-width:640px) { .hsm { display:none !important; } }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes fin  { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
+  .fin { animation:fin 0.25s ease; }
+`;
+
+// ── ATOMS ─────────────────────────────────────────────────────────────────────
+function Btn({ onClick, children, variant="primary", size="md", style:sx={}, disabled=false }) {
+  const bg  = {primary:C.p,accent:C.a,success:C.ok,danger:C.err,ghost:"transparent",wa:"#25D366"}[variant]||C.p;
+  const col = {primary:"#fff",accent:"#fff",success:"#fff",danger:"#fff",ghost:C.p,wa:"#fff"}[variant]||"#fff";
+  const brd = variant==="ghost" ? `1.5px solid ${C.b}` : "none";
+  const pad = {sm:"5px 10px",md:"8px 16px",lg:"10px 22px"}[size]||"8px 16px";
+  return (
+    <button onClick={onClick} disabled={disabled}
+      style={{background:bg,color:col,border:brd,padding:pad,borderRadius:8,fontWeight:700,
+        fontSize:size==="sm"?12:14,display:"inline-flex",alignItems:"center",gap:5,opacity:disabled?0.5:1,...sx}}>
+      {children}
+    </button>
+  );
+}
+
+function Card({ title, children, action, style:sx={} }) {
+  return (
+    <div style={{background:C.s,borderRadius:12,border:`1px solid ${C.b}`,overflow:"hidden",marginBottom:16,...sx}}>
+      {title && (
+        <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:"#FAFAF8"}}>
+          <span style={{fontWeight:700,fontSize:14,color:C.p}}>{title}</span>
+          {action}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function Badge({ children, color="primary" }) {
+  const map = {primary:{bg:"#E8EFF7",c:C.p},success:{bg:C.okb,c:C.ok},danger:{bg:C.errb,c:C.err},warn:{bg:C.warnb,c:C.warn}};
+  const {bg,c} = map[color]||map.primary;
+  return <span style={{background:bg,color:c,padding:"3px 9px",borderRadius:20,fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>{children}</span>;
+}
+
+function Field({ label, children }) {
+  return (
+    <div style={{marginBottom:14}}>
+      <label style={{display:"block",fontSize:13,fontWeight:700,color:C.p,marginBottom:5}}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function Empty({ msg }) {
+  return <div style={{padding:"32px 16px",textAlign:"center",color:C.m,fontSize:14}}>{msg||"Kayıt bulunamadı."}</div>;
+}
+
+function Modal({ open, onClose, title, children }) {
+  if (!open) return null;
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.s,borderRadius:14,padding:24,maxWidth:480,width:"92%",boxShadow:"0 8px 32px rgba(0,0,0,0.25)",maxHeight:"90vh",overflowY:"auto"}}>
+        {title && <h3 style={{fontFamily:"'Playfair Display',serif",color:C.t,fontSize:18,marginBottom:14}}>{title}</h3>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Spinner({ msg }) {
+  return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,gap:14}}>
+      <style>{CSS}</style>
+      <div style={{fontSize:44}}>👔</div>
+      <p style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:20,fontWeight:700}}>Seren Kuru Temizleme</p>
+      <div style={{width:32,height:32,border:`3px solid ${C.p}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+      {msg && <p style={{color:C.m,fontSize:13}}>{msg}</p>}
+    </div>
+  );
+}
+
+function Nav({ view, nav, syncStatus, authUser, onLogout }) {
+  const items = [
+    {id:"home",icon:"🏠",label:"Ana Sayfa"},
+    {id:"clist",icon:"👥",label:"Müşteriler"},
+    {id:"cash",icon:"💰",label:"Kasa"},
+    {id:"reports",icon:"📊",label:"Raporlar"},
+    {id:"settings",icon:"⚙️",label:"Ayarlar"},
+  ];
+  return (
+    <nav style={{position:"fixed",top:0,left:0,right:0,height:60,background:C.p,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 12px",zIndex:200,boxShadow:"0 2px 14px rgba(0,0,0,0.28)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+        <span style={{fontSize:20}}>👔</span>
+        <span className="hsm" style={{fontFamily:"'Playfair Display',serif",color:"#fff",fontSize:14,fontWeight:700,whiteSpace:"nowrap"}}>Seren Kuru Temizleme</span>
+        {syncStatus==="saving" && <span style={{color:"rgba(255,255,255,0.7)",fontSize:11,animation:"pulse 1s infinite"}}>⏳ Kaydediliyor…</span>}
+        {syncStatus==="ok"     && <span style={{color:"#90EFC4",fontSize:11}}>✓ Kaydedildi</span>}
+        {syncStatus==="error"  && <span style={{color:"#FFB3A7",fontSize:11}}>⚠ Hata</span>}
+      </div>
+      <div style={{display:"flex",gap:1,alignItems:"center"}}>
+        {items.map(it => (
+          <button key={it.id} onClick={()=>nav(it.id)}
+            style={{background:view===it.id?"rgba(255,255,255,0.2)":"transparent",border:"none",color:"#fff",padding:"6px 9px",borderRadius:8,fontWeight:700,fontSize:11,display:"flex",flexDirection:"column",alignItems:"center",gap:1,opacity:view===it.id?1:0.72,cursor:"pointer"}}>
+            <span style={{fontSize:16}}>{it.icon}</span>
+            <span className="hsm">{it.label}</span>
+          </button>
+        ))}
+        <div style={{width:1,height:32,background:"rgba(255,255,255,0.2)",margin:"0 4px"}}/>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"4px 6px"}}>
+          <span style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>👤</span>
+          <span style={{fontSize:10,color:"rgba(255,255,255,0.8)",fontWeight:700,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(authUser && authUser.name)}</span>
+        </div>
+        <button onClick={onLogout} title="Çıkış Yap"
+          style={{background:"rgba(255,255,255,0.12)",border:"none",color:"#fff",padding:"6px 9px",borderRadius:8,fontSize:11,cursor:"pointer",fontWeight:700}}>
+          🚪
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+// ── MAIN APP ─────────────────────────────────────────────────────────────────
+function App() {
+  const [view, setView]  = useState("home");
+  const [pg,   setPg]    = useState({});
+  const [cx,   setCx]    = useState([]);
+  const [tx,   setTx]    = useState([]);
+  const [cb,   setCb]    = useState([]);
+  const [cfg,  setCfg]   = useState({ svc: DEFAULT_SVC });
+  const [sync, setSync]  = useState("idle");
+  const [ready,setReady] = useState(false);
+  const [authUser, setAuthUser] = useState(() => SS.get("authUser"));
+  const [token, setToken] = useState(() => SS.get("token"));
+  const timer = useRef(null);
+
+  useEffect(() => {
+    if (!token) {
+      setReady(true);
+      setSync("idle");
+      return;
+    }
+
+    setSync("saving");
+    gsRead(token)
+      .then(d => {
+        if (d.cx) setCx(d.cx);
+        if (d.tx) setTx(d.tx);
+        if (d.cb) setCb(d.cb);
+        if (typeof d.cfg !== "undefined") setCfg(migrateCfg(d.cfg));
+        LC.set("cx",d.cx||[]); LC.set("tx",d.tx||[]); LC.set("cb",d.cb||[]); LC.set("cfg",d.cfg);
+        setSync("ok");
+      })
+      .catch(() => {
+        // Yetkisiz / token bozuksa login ekranına dön
+        SS.del("token");
+        SS.del("authUser");
+        setToken(null);
+        setAuthUser(null);
+        setSync("error");
+      })
+      .finally(() => setReady(true));
+  }, [token]);
+
+  const saveAll = useCallback((ncx,ntx,ncb,ncfg) => {
+    clearTimeout(timer.current);
+    setSync("saving");
+    LC.set("cx",ncx); LC.set("tx",ntx); LC.set("cb",ncb); LC.set("cfg",ncfg);
+    timer.current = setTimeout(() => {
+      gsWrite(token,{cx:ncx,tx:ntx,cb:ncb,cfg:ncfg})
+        .then(()=>setSync("ok"))
+        .catch(()=>setSync("error"))
+        .finally(()=>setTimeout(()=>setSync("idle"),3000));
+    }, 800);
+  }, [token]);
+
+  const uCx  = d => { setCx(d);  saveAll(d, tx, cb, cfg); };
+  const uTx  = d => { setTx(d);  saveAll(cx, d, cb, cfg); };
+  const uCb  = d => { setCb(d);  saveAll(cx, tx, d, cfg); };
+  const uCfg = d => {
+    const r = authUser?.role || "";
+    const isAdmin = String(r).toUpperCase() === "ADMIN" || String(r).toLowerCase() === "admin";
+    if (!isAdmin) { alert("Hizmet/fiyat düzenlemek için ADMIN yetkisi gerekir."); return; }
+    setCfg(d);
+    saveAll(cx, tx, cb, d);
+  };
+  const nav  = (v, params={}) => { setView(v); setPg(params); window.scrollTo(0,0); };
+
+  const onExport = () => exportJSON(cx,tx,cb,cfg);
+  const onImport = file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const d = JSON.parse(e.target.result);
+        if (!d.cx||!d.tx) { alert("Geçersiz yedek."); return; }
+        if (!window.confirm("Mevcut veriler silinip yedek yüklenecek. Devam?")) return;
+        uCx(d.cx||[]); uTx(d.tx||[]); uCb(d.cb||[]);
+        if (d.cfg) uCfg(d.cfg);
+        alert("✅ Yedek yüklendi!");
+      } catch { alert("Dosya okunamadı."); }
+    };
+    reader.readAsText(file);
+  };
+
+  if (!ready) return <Spinner msg="Google Sheets'ten veriler yükleniyor…" />;
+
+  const handleLogin = payload => {
+    const t = payload?.token || null;
+    const u = payload?.user || null;
+    if (t) SS.set("token", t);
+    if (u) SS.set("authUser", u);
+    setToken(t);
+    setAuthUser(u);
+  };
+  const handleLogout = () => {
+    SS.del("token");
+    SS.del("authUser");
+    setToken(null);
+    setAuthUser(null);
+    setView("home");
+  };
+
+  // Giriş yapılmamışsa Login ekranı göster
+  if (!token || !authUser) return <Login onLogin={handleLogin} />;
+
+  const liveUser = authUser;
+
+  const ctx = { cx, tx, cb, cfg, nav, pg, uCx, uTx, uCb, uCfg, onExport, onImport, sync, authUser:liveUser, onLogout:handleLogout };
+  const views = { home:Home, clist:CList, cform:CForm, cdetail:CDetail, newtx:NewTx, txdetail:TxDetail, cash:Cash, reports:Reports, settings:Settings };
+  const View = views[view] || Home;
+
+  return (
+    <div style={{fontFamily:"'Nunito',sans-serif",background:C.bg,minHeight:"100vh",color:C.t}}>
+      <style>{CSS}</style>
+      <Nav view={view} nav={nav} syncStatus={sync} authUser={liveUser} onLogout={handleLogout} />
+      <div style={{maxWidth:960,margin:"0 auto",padding:"72px 14px 60px"}}>
+        <View {...ctx} />
+      </div>
+    </div>
+  );
+}
+
+// ── HOME ──────────────────────────────────────────────────────────────────────
+function Home({ cx, tx, nav }) {
+  const [q,     setQ]     = useState("");
+  const [found, setFound] = useState(null);
+  const [multi, setMulti] = useState([]);
+
+  const search = () => {
+    const s = q.trim().toLowerCase().replace(/\s/g,"");
+    if (!s) return;
+    const r = cx.filter(c => c.phone.replace(/\s/g,"").includes(s) || c.name.toLowerCase().includes(q.trim().toLowerCase()));
+    if      (!r.length)    { alert("Müşteri bulunamadı."); setFound(null); setMulti([]); }
+    else if (r.length===1) { setFound(r[0]); setMulti([]); }
+    else                   { setMulti(r); setFound(null); }
+  };
+  const clearSearch = () => { setFound(null); setMulti([]); setQ(""); };
+
+  const openTxs    = found ? tx.filter(t=>t.customerId===found.id&&t.status==="open") : [];
+  const sum        = found ? getCustSummary(found.id,tx) : {};
+  const totalOpen  = tx.filter(t=>t.status==="open").length;
+  const totalDebt  = tx.reduce((s,t)=>{const{balance}=calcTx(t);return s+(balance>0?balance:0);},0);
+  const todayPaid  = tx.reduce((s,t)=>s+(t.payments||[]).filter(p=>p.date && p.date.startsWith(today())).reduce((a,p)=>a+p.amount,0),0);
+  const readyAlert = tx.filter(t=>t.readyDate&&t.status==="open"&&new Date(t.readyDate)<=new Date(today())).length;
+
+  return (
+    <div className="fin">
+      <div style={{background:C.p,borderRadius:16,padding:"26px 22px",marginBottom:18,boxShadow:"0 4px 24px rgba(27,58,92,0.22)"}}>
+        <h1 style={{fontFamily:"'Playfair Display',serif",color:"#fff",fontSize:22,marginBottom:4}}>Müşteri Sorgula</h1>
+        <p style={{color:"rgba(255,255,255,0.65)",fontSize:13,marginBottom:16}}>Ad, soyad veya telefon numarası ile arayın</p>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}
+            placeholder="0555 123 45 67 veya Ad Soyad…"
+            style={{flex:1,minWidth:160,border:"none",borderRadius:9,padding:"11px 14px",fontSize:15}}/>
+          <Btn onClick={search} variant="accent" size="lg">🔍 Sorgula</Btn>
+          <Btn onClick={()=>nav("cform")} variant="ghost" size="lg" style={{color:"#fff",border:"1.5px solid rgba(255,255,255,0.4)"}}>+ Yeni Müşteri</Btn>
+        </div>
+      </div>
+
+      {multi.length > 1 && (
+        <Card title={`${multi.length} müşteri bulundu`} action={<Btn onClick={clearSearch} variant="ghost" size="sm">✕</Btn>}>
+          {multi.map(c => (
+            <div key={c.id} className="hrow" onClick={()=>{setFound(c);setMulti([]);}}
+              style={{padding:"12px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontWeight:700}}>{c.name}</div>
+                <div style={{color:C.m,fontSize:12}}>📞 {c.phone}</div>
+              </div>
+              <span style={{color:C.m}}>›</span>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {found && (
+        <div className="fin">
+          <div style={{background:C.s,borderRadius:12,padding:18,marginBottom:14,border:`1px solid ${C.b}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10,marginBottom:14}}>
+              <div>
+                <h2 style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:20,marginBottom:4}}>{found.name}</h2>
+                <div style={{color:C.m,fontSize:13}}>📞 {found.phone}{found.address?` | 📍 ${found.address}`:""}</div>
+              </div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <Btn onClick={clearSearch} variant="ghost" size="sm">✕</Btn>
+                <Btn onClick={()=>nav("newtx",{cid:found.id})} variant="accent" size="sm">+ Yeni İşlem</Btn>
+                <Btn onClick={()=>nav("cdetail",{cid:found.id})} variant="primary" size="sm">Müşteri Detayı →</Btn>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <div style={{background:"#E8EFF7",borderRadius:9,padding:"8px 14px"}}>
+                <div style={{color:C.m,fontSize:11}}>Açık İşlem</div>
+                <div style={{fontWeight:800,color:C.p,fontSize:17}}>{sum.openCount}</div>
+              </div>
+              <div style={{background:sum.debt>0.01?C.errb:C.okb,borderRadius:9,padding:"8px 14px"}}>
+                <div style={{color:C.m,fontSize:11}}>Toplam Borç</div>
+                <div style={{fontWeight:800,color:sum.debt>0.01?C.err:C.ok,fontSize:17}}>{fmt(sum.debt)}</div>
+              </div>
+              <div style={{background:"#F0EBE3",borderRadius:9,padding:"8px 14px"}}>
+                <div style={{color:C.m,fontSize:11}}>Toplam İşlem</div>
+                <div style={{fontWeight:800,color:C.t,fontSize:17}}>{sum.total}</div>
+              </div>
+            </div>
+          </div>
+          <Card title="Açık İşlemler" action={<Badge color={openTxs.length?"warn":"success"}>{openTxs.length} açık</Badge>}>
+            {openTxs.length===0 ? <Empty msg="✅ Açık işlem yok"/> : openTxs.map(t => {
+              const {total,paid,balance,itemsCount,deliveredCount} = calcTx(t);
+              return (
+                <div key={t.id} style={{padding:"14px 16px",borderBottom:`1px solid ${C.b}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:8}}>
+                    <div>
+                      <span style={{fontWeight:700,color:C.p,fontSize:13}}>#{t.id.slice(-6).toUpperCase()}</span>
+                      <span style={{color:C.m,fontSize:12,marginLeft:8}}>{fdate(t.createdAt)}</span>
+                      {t.readyDate && <span style={{color:C.warn,fontSize:12,marginLeft:8}}>🕐 {fdate(t.readyDate)}</span>}
+                      {t.notes && <div style={{color:C.m,fontSize:12}}>📝 {t.notes}</div>}
+                    </div>
+                    <Btn onClick={()=>nav("txdetail",{txId:t.id})} variant="primary" size="sm">Detay / Teslim</Btn>
+                  </div>
+                  <div style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:13}}>
+                    <span style={{color:C.m}}>{itemsCount} ürün · {deliveredCount} teslim</span>
+                    <span>Toplam: <b>{fmt(total)}</b></span>
+                    <span style={{color:C.ok}}>Ödendi: <b>{fmt(paid)}</b></span>
+                    <span style={{color:balance>0.01?C.err:C.ok,fontWeight:700}}>Kalan: {fmt(balance)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        </div>
+      )}
+
+      {!found && multi.length===0 && (
+        <div className="fin">
+          {readyAlert > 0 && (
+            <div onClick={()=>nav("reports")} style={{background:C.warnb,border:`1.5px solid ${C.warn}`,borderRadius:10,padding:"12px 16px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,cursor:"pointer"}}>
+              <span style={{color:C.warn,fontWeight:700}}>🔔 {readyAlert} işlem hazır tarihini geçti!</span>
+              <Btn variant="ghost" size="sm" style={{color:C.warn,border:`1px solid ${C.warn}`}}>Görüntüle →</Btn>
+            </div>
+          )}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:12}}>
+            {[
+              {label:"Toplam Müşteri",   value:cx.length,      icon:"👥",color:C.p,                    action:()=>nav("clist")},
+              {label:"Açık İşlemler",   value:totalOpen,       icon:"🔄",color:C.warn,                  action:()=>nav("reports")},
+              {label:"Toplam Alacak",   value:fmt(totalDebt),  icon:"💸",color:totalDebt>0?C.err:C.ok},
+              {label:"Bugünkü Tahsilat",value:fmt(todayPaid),  icon:"💰",color:C.ok,                    action:()=>nav("cash")},
+            ].map((s,i) => (
+              <div key={i} onClick={s.action} style={{background:C.s,borderRadius:12,padding:"18px 16px",border:`1px solid ${C.b}`,cursor:s.action?"pointer":"default"}}>
+                <div style={{fontSize:26,marginBottom:6}}>{s.icon}</div>
+                <div style={{color:C.m,fontSize:12,marginBottom:2}}>{s.label}</div>
+                <div style={{fontWeight:800,fontSize:18,color:s.color}}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CUSTOMER LIST ─────────────────────────────────────────────────────────────
+function CList({ cx, tx, nav }) {
+  const [q, setQ] = useState("");
+  const filtered = cx.filter(c=>!q||c.name.toLowerCase().includes(q.toLowerCase())||c.phone.includes(q));
+  return (
+    <div className="fin">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+        <h2 style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:20}}>Müşteriler ({cx.length})</h2>
+        <Btn onClick={()=>nav("cform")} variant="accent">+ Yeni Müşteri</Btn>
+      </div>
+      <div style={{marginBottom:12}}>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Ad veya telefon ile filtrele…"/>
+      </div>
+      <Card>
+        {filtered.length===0 ? <Empty/> : filtered.sort((a,b)=>a.name.localeCompare(b.name,"tr")).map(c => {
+          const {debt,openCount} = getCustSummary(c.id,tx);
+          return (
+            <div key={c.id} className="hrow" onClick={()=>nav("cdetail",{cid:c.id})}
+              style={{padding:"12px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontWeight:700,marginBottom:2}}>{c.name}</div>
+                <div style={{color:C.m,fontSize:12}}>📞 {c.phone}{c.address?` • ${c.address}`:""}</div>
+              </div>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                {openCount>0 && <Badge color="warn">{openCount} açık</Badge>}
+                {debt>0.01   && <Badge color="danger">{fmt(debt)}</Badge>}
+                <span style={{color:C.m,fontSize:18}}>›</span>
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
+// ── CUSTOMER FORM ─────────────────────────────────────────────────────────────
+function CForm({ cx, nav, pg, uCx }) {
+  const editing = pg.cid ? cx.find(c=>c.id===pg.cid) : null;
+  const [form, setForm] = useState({name:(editing && editing.name)||"",phone:(editing && editing.phone)||"",address:(editing && editing.address)||""});
+  const [delModal, setDelModal] = useState(false);
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+  const save = () => {
+    if (!form.name.trim()||!form.phone.trim()) { alert("Ad ve telefon zorunludur."); return; }
+    if (editing) uCx(cx.map(c=>c.id===editing.id?{...c,...form}:c));
+    else         uCx([...cx,{id:uid(),createdAt:new Date().toISOString(),...form}]);
+    nav("clist");
+  };
+  return (
+    <div className="fin" style={{maxWidth:480}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+        <Btn onClick={()=>nav("clist")} variant="ghost" size="sm">← Geri</Btn>
+        <h2 style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:20}}>{editing?"Müşteri Düzenle":"Yeni Müşteri"}</h2>
+      </div>
+      <Card>
+        <div style={{padding:20}}>
+          <Field label="Ad Soyad *"><input value={form.name}    onChange={e=>set("name",e.target.value)}    placeholder="Ahmet Yılmaz"/></Field>
+          <Field label="Telefon *"> <input value={form.phone}   onChange={e=>set("phone",e.target.value)}   placeholder="0555 555 55 55"/></Field>
+          <Field label="Adres">     <textarea value={form.address} onChange={e=>set("address",e.target.value)} placeholder="Mahalle, sokak, ilçe…" rows={2} style={{resize:"vertical"}}/></Field>
+          <Btn onClick={save} variant="accent" size="lg" style={{width:"100%",justifyContent:"center",marginBottom:editing?10:0}}>{editing?"Güncelle":"Müşteriyi Kaydet"}</Btn>
+          {editing && <Btn onClick={()=>setDelModal(true)} variant="danger" size="sm" style={{width:"100%",justifyContent:"center"}}>🗑 Müşteriyi Sil</Btn>}
+        </div>
+      </Card>
+      <Modal open={delModal} onClose={()=>setDelModal(false)} title="Müşteriyi Sil">
+        <p style={{color:C.m,fontSize:14,marginBottom:18}}>Bu müşteriyi silmek istiyor musunuz?</p>
+        <div style={{display:"flex",gap:10}}>
+          <Btn onClick={()=>{uCx(cx.filter(c=>c.id!==editing.id));nav("clist");}} variant="danger" style={{flex:1,justifyContent:"center"}}>Evet, Sil</Btn>
+          <Btn onClick={()=>setDelModal(false)} variant="ghost" style={{flex:1,justifyContent:"center"}}>İptal</Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// ── SETTINGS USERS ────────────────────────────────────────────────────────────
+function SettingsUsers({ users, authUser, uUsers, onLogout }) {
+  const isAdmin = (authUser && authUser.role) === "admin";
+  const [newUser, setNewUser] = useState({name:"",username:"",password:"",role:"user"});
+  const [editUser, setEditUser] = useState(null);
+  const [pwModal, setPwModal] = useState(false);
+  const [pw, setPw] = useState({old:"",n1:"",n2:""});
+  const [pwErr, setPwErr] = useState("");
+
+  const addUser = () => {
+    if (!newUser.name.trim()||!newUser.username.trim()||!newUser.password.trim()) { alert("Ad, kullanıcı adı ve şifre zorunludur."); return; }
+    if (users.find(u=>u.username===newUser.username.trim())) { alert("Bu kullanıcı adı zaten kullanılıyor."); return; }
+    uUsers([...users,{id:uid(),...newUser,name:newUser.name.trim(),username:newUser.username.trim(),password:newUser.password.trim(),active:true}]);
+    setNewUser({name:"",username:"",password:"",role:"user"});
+  };
+
+  const toggleActive = u => {
+    if (u.id===authUser.id) { alert("Kendinizi devre dışı bırakamazsınız."); return; }
+    uUsers(users.map(x=>x.id!==u.id?x:{...x,active:!x.active}));
+  };
+
+  const delUser = u => {
+    if (u.id===authUser.id) { alert("Kendinizi silemezsiniz."); return; }
+    if (!window.confirm(`"${u.name}" kullanıcısını silmek istiyor musunuz?`)) return;
+    uUsers(users.filter(x=>x.id!==u.id));
+  };
+
+  const changePw = () => {
+    setPwErr("");
+    if (!pw.old||!pw.n1||!pw.n2) { setPwErr("Tüm alanları doldurun."); return; }
+    const me = users.find(u=>u.id===authUser.id);
+    if (me.password !== pw.old) { setPwErr("Mevcut şifre hatalı."); return; }
+    if (pw.n1 !== pw.n2) { setPwErr("Yeni şifreler eşleşmiyor."); return; }
+    if (pw.n1.length < 4) { setPwErr("Şifre en az 4 karakter olmalı."); return; }
+    uUsers(users.map(u=>u.id===authUser.id?{...u,password:pw.n1}:u));
+    setPwModal(false); setPw({old:"",n1:"",n2:""}); alert("✅ Şifre güncellendi. Lütfen tekrar giriş yapın.");
+    onLogout();
+  };
+
+  const saveEditUser = () => {
+    if (!editUser.name.trim()||!editUser.username.trim()) { alert("Ad ve kullanıcı adı zorunludur."); return; }
+    const conflict = users.find(u=>u.username===editUser.username.trim()&&u.id!==editUser.id);
+    if (conflict) { alert("Bu kullanıcı adı zaten kullanılıyor."); return; }
+    uUsers(users.map(u=>u.id!==editUser.id?u:{...u,name:editUser.name.trim(),username:editUser.username.trim(),role:editUser.role,...(editUser.newPw?{password:editUser.newPw}:{})}));
+    setEditUser(null);
+  };
+
+  return (
+    <div>
+      {/* Şifremi Değiştir */}
+      <div style={{background:"#E8EFF7",borderRadius:12,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+        <div>
+          <div style={{fontWeight:700,color:C.p}}>👤 {(authUser && authUser.name)}</div>
+          <div style={{color:C.m,fontSize:12}}>@{(authUser && authUser.username)} · {(authUser && authUser.role)==="admin"?"Yönetici":"Kullanıcı"}</div>
+        </div>
+        <Btn onClick={()=>setPwModal(true)} variant="ghost" size="sm">🔑 Şifremi Değiştir</Btn>
+      </div>
+
+      {/* Kullanıcı Listesi — sadece admin */}
+      {isAdmin && (
+        <Card title="Kullanıcı Yönetimi">
+          {users.map(u=>(
+            <div key={u.id} style={{padding:"12px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700}}>{u.name}</span>
+                  <Badge color={u.role==="admin"?"warn":"primary"}>{u.role==="admin"?"Yönetici":"Kullanıcı"}</Badge>
+                  {u.active===false&&<Badge color="danger">Devre Dışı</Badge>}
+                  {u.id===authUser.id&&<Badge color="success">Siz</Badge>}
+                </div>
+                <div style={{color:C.m,fontSize:12,marginTop:2}}>@{u.username}</div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <Btn onClick={()=>setEditUser({...u,newPw:""})} variant="ghost" size="sm">✏️</Btn>
+                <Btn onClick={()=>toggleActive(u)} variant={u.active===false?"success":"ghost"} size="sm">{u.active===false?"✅ Aç":"⏸ Kapat"}</Btn>
+                {u.id!==authUser.id&&<Btn onClick={()=>delUser(u)} variant="danger" size="sm">🗑</Btn>}
+              </div>
+            </div>
+          ))}
+          {/* Yeni kullanıcı */}
+          <div style={{padding:16}}>
+            <div style={{fontWeight:700,color:C.p,fontSize:13,marginBottom:10}}>+ Yeni Kullanıcı</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <input value={newUser.name}     onChange={e=>setNewUser(f=>({...f,name:e.target.value}))}     placeholder="Ad Soyad"/>
+              <input value={newUser.username} onChange={e=>setNewUser(f=>({...f,username:e.target.value}))} placeholder="Kullanıcı adı"/>
+              <input value={newUser.password} onChange={e=>setNewUser(f=>({...f,password:e.target.value}))} placeholder="Şifre" type="password"/>
+              <select value={newUser.role} onChange={e=>setNewUser(f=>({...f,role:e.target.value}))}>
+                <option value="user">Kullanıcı</option>
+                <option value="admin">Yönetici</option>
+              </select>
+            </div>
+            <Btn onClick={addUser} variant="success" style={{width:"100%",justifyContent:"center"}}>+ Kullanıcı Ekle</Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Şifre değiştirme modal */}
+      <Modal open={pwModal} onClose={()=>{setPwModal(false);setPwErr("");setPw({old:"",n1:"",n2:""})}} title="Şifremi Değiştir">
+        <Field label="Mevcut Şifre">  <input type="password" value={pw.old} onChange={e=>setPw(p=>({...p,old:e.target.value}))} placeholder="Mevcut şifreniz"/></Field>
+        <Field label="Yeni Şifre">    <input type="password" value={pw.n1}  onChange={e=>setPw(p=>({...p,n1:e.target.value}))}  placeholder="Yeni şifre (en az 4 karakter)"/></Field>
+        <Field label="Yeni Şifre (Tekrar)"><input type="password" value={pw.n2} onChange={e=>setPw(p=>({...p,n2:e.target.value}))} placeholder="Yeni şifre tekrar"/></Field>
+        {pwErr && <div style={{background:C.errb,color:C.err,borderRadius:8,padding:"8px 12px",fontSize:13,fontWeight:600,marginBottom:12}}>{pwErr}</div>}
+        <div style={{display:"flex",gap:10}}>
+          <Btn onClick={changePw} variant="accent" style={{flex:1,justifyContent:"center"}}>Şifreyi Güncelle</Btn>
+          <Btn onClick={()=>{setPwModal(false);setPwErr("");}} variant="ghost" style={{flex:1,justifyContent:"center"}}>İptal</Btn>
+        </div>
+      </Modal>
+
+      {/* Kullanıcı düzenleme modal */}
+      <Modal open={!!editUser} onClose={()=>setEditUser(null)} title="Kullanıcıyı Düzenle">
+        {editUser && <>
+          <Field label="Ad Soyad">         <input value={editUser.name}     onChange={e=>setEditUser(u=>({...u,name:e.target.value}))}     placeholder="Ad Soyad"/></Field>
+          <Field label="Kullanıcı Adı">   <input value={editUser.username} onChange={e=>setEditUser(u=>({...u,username:e.target.value}))} placeholder="Kullanıcı adı"/></Field>
+          <Field label="Yetki">
+            <select value={editUser.role} onChange={e=>setEditUser(u=>({...u,role:e.target.value}))}>
+              <option value="user">Kullanıcı</option>
+              <option value="admin">Yönetici</option>
+            </select>
+          </Field>
+          <Field label="Yeni Şifre (boş bırakırsanız değişmez)">
+            <input type="password" value={editUser.newPw||""} onChange={e=>setEditUser(u=>({...u,newPw:e.target.value}))} placeholder="Yeni şifre (opsiyonel)"/>
+          </Field>
+          <div style={{display:"flex",gap:10}}>
+            <Btn onClick={saveEditUser} variant="accent" style={{flex:1,justifyContent:"center"}}>Kaydet</Btn>
+            <Btn onClick={()=>setEditUser(null)} variant="ghost" style={{flex:1,justifyContent:"center"}}>İptal</Btn>
+          </div>
+        </>}
+      </Modal>
+    </div>
+  );
+}
+
+// ── CUSTOMER DETAIL ───────────────────────────────────────────────────────────
+function CDetail({ cx, tx, nav, pg }) {
+  const [tab, setTab] = useState("open");
+  const cust = cx.find(c=>c.id===pg.cid);
+  if (!cust) return <div><Btn onClick={()=>nav("clist")} variant="ghost" size="sm">← Geri</Btn><Empty msg="Müşteri bulunamadı."/></div>;
+
+  const ctxs       = tx.filter(t=>t.customerId===cust.id).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const openTxs    = ctxs.filter(t=>t.status==="open");
+  const {debt,total} = getCustSummary(cust.id,tx);
+  const totalPaid  = ctxs.reduce((s,t)=>(t.payments||[]).reduce((a,p)=>a+p.amount,s),0);
+  const allPayments = ctxs.flatMap(t=>(t.payments||[]).map(pay=>({...pay,txId:t.id}))).sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  return (
+    <div className="fin">
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+        <Btn onClick={()=>nav("clist")} variant="ghost" size="sm">← Müşteriler</Btn>
+        <Btn onClick={()=>nav("cform",{cid:cust.id})} variant="ghost" size="sm">✏️ Düzenle</Btn>
+      </div>
+      <div style={{background:C.p,borderRadius:14,padding:"18px 22px",marginBottom:14,color:"#fff"}}>
+        <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:22,marginBottom:4}}>{cust.name}</h2>
+        <div style={{fontSize:13,opacity:0.8}}>📞 {cust.phone}{cust.address?` | 📍 ${cust.address}`:""}</div>
+        <div style={{display:"flex",gap:10,marginTop:14,flexWrap:"wrap"}}>
+          <div style={{background:"rgba(255,255,255,0.14)",borderRadius:8,padding:"8px 14px"}}>
+            <div style={{opacity:0.7,fontSize:11}}>Toplam İşlem</div>
+            <div style={{fontWeight:800,fontSize:16}}>{total}</div>
+          </div>
+          <div style={{background:"rgba(42,125,90,0.35)",borderRadius:8,padding:"8px 14px"}}>
+            <div style={{opacity:0.7,fontSize:11}}>Toplam Ödedi</div>
+            <div style={{fontWeight:800,fontSize:16}}>{fmt(totalPaid)}</div>
+          </div>
+          <div style={{background:debt>0.01?"rgba(176,48,37,0.4)":"rgba(42,125,90,0.35)",borderRadius:8,padding:"8px 14px"}}>
+            <div style={{opacity:0.7,fontSize:11}}>Toplam Borç</div>
+            <div style={{fontWeight:800,fontSize:16}}>{fmt(debt)}</div>
+          </div>
+        </div>
+      </div>
+
+      <Btn onClick={()=>nav("newtx",{cid:cust.id})} variant="accent" size="lg" style={{width:"100%",justifyContent:"center",marginBottom:14}}>+ Yeni İşlem Aç</Btn>
+
+      <div style={{display:"flex",gap:2,marginBottom:12,background:"#E8E2D9",borderRadius:10,padding:3}}>
+        {[["open","Açık İşlemler"],["all","Tüm İşlemler"],["payments","Ödemeler"]].map(([k,l]) => (
+          <button key={k} onClick={()=>setTab(k)}
+            style={{flex:1,padding:"7px 4px",borderRadius:8,border:"none",background:tab===k?C.s:"transparent",color:tab===k?C.p:C.m,fontWeight:700,fontSize:13,cursor:"pointer"}}>
+            {l}{k==="open"&&openTxs.length>0?` (${openTxs.length})`:""}
+          </button>
+        ))}
+      </div>
+
+      {tab==="open" && (
+        <Card>
+          {openTxs.length===0 ? <Empty msg="✅ Açık işlem yok"/> : openTxs.map(t => {
+            const s = calcTx(t);
+            return (
+              <div key={t.id} className="hrow" onClick={()=>nav("txdetail",{txId:t.id})} style={{padding:"14px 16px",borderBottom:`1px solid ${C.b}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div>
+                    <span style={{fontWeight:700,color:C.p}}>#{t.id.slice(-6).toUpperCase()}</span>
+                    <span style={{color:C.m,fontSize:12,marginLeft:8}}>{fdate(t.createdAt)}</span>
+                    {t.readyDate && <span style={{color:C.warn,fontSize:12,marginLeft:8}}>🕐 {fdate(t.readyDate)}</span>}
+                  </div>
+                  <Badge color={s.balance>0.01?"danger":"success"}>{fmt(s.balance)} kalan</Badge>
+                </div>
+                <div style={{color:C.m,fontSize:12,marginTop:5}}>{s.itemsCount} ürün · {s.deliveredCount} teslim · Toplam {fmt(s.total)}</div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+      {tab==="all" && (
+        <Card>
+          {ctxs.length===0 ? <Empty/> : ctxs.map(t => {
+            const s = calcTx(t);
+            return (
+              <div key={t.id} className="hrow" onClick={()=>nav("txdetail",{txId:t.id})} style={{padding:"12px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <span style={{fontWeight:700,color:C.p,marginRight:6}}>#{t.id.slice(-6).toUpperCase()}</span>
+                  <Badge color={t.status==="open"?"warn":"success"}>{t.status==="open"?"Açık":"Kapalı"}</Badge>
+                  <span style={{color:C.m,fontSize:12,marginLeft:8}}>{fdate(t.createdAt)}</span>
+                </div>
+                <span style={{fontWeight:700}}>{fmt(s.total)}</span>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+      {tab==="payments" && (
+        <Card>
+          {allPayments.length===0 ? <Empty msg="Ödeme kaydı yok."/> : allPayments.map((pay,i) => (
+            <div key={i} style={{padding:"12px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <span style={{fontWeight:700,color:C.ok}}>{fmt(pay.amount)}</span>
+                <span style={{color:C.m,fontSize:12,marginLeft:8}}>{fdate(pay.date)} · #{pay.txId.slice(-6).toUpperCase()}{pay.note?` · ${pay.note}`:""}</span>
+              </div>
+              <Badge color="success">{pay.method||"Nakit"}</Badge>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── NEW TRANSACTION ───────────────────────────────────────────────────────────
+function NewTx({ cx, tx, cfg, nav, pg, uTx }) {
+  const cust = cx.find(c=>c.id===pg.cid);
+  const firstSvc = cfg.svc[0];
+
+  const newItem = (svc) => {
+    const s = svc || firstSvc || {};
+    const firstPrd = (s.items||[])[0] || {};
+    return {
+      id:uid(),
+      svcId:s.id||"", svcName:s.name||"",
+      prdId:firstPrd.id||"", prdName:firstPrd.name||"",
+      unitPrice:firstPrd.price||0,
+      qty:1, discount:0,
+      delivered:false, deliveredAt:null, note:""
+    };
+  };
+
+  const [items,     setItems]  = useState([newItem()]);
+  const [readyDate, setRD]     = useState("");
+  const [notes,     setNotes]  = useState("");
+
+  if (!cust) return <div><Btn onClick={()=>nav("home")} variant="ghost">← Geri</Btn><Empty msg="Müşteri bulunamadı"/></div>;
+
+  // Hizmet seçildiğinde: svcId/svcName güncelle, ürün listesini sıfırla
+  const selectSvc = (idx, svcId) => {
+    const svc = cfg.svc.find(s=>s.id===svcId);
+    const firstPrd = ((svc && svc.items)||[])[0] || {};
+    setItems(arr => arr.map((it,i) => i!==idx ? it : {
+      ...it,
+      svcId, svcName:(svc && svc.name)||"",
+      prdId:firstPrd.id||"", prdName:firstPrd.name||"",
+      unitPrice:firstPrd.price||0,
+    }));
+  };
+
+  // Ürün seçildiğinde: sadece o hizmetin ürünleri arasından seç
+  const selectPrd = (idx, prdId) => {
+    const svc = cfg.svc.find(s=>s.id===items[idx].svcId);
+    const prd = ((svc && svc.items)||[]).find(p=>p.id===prdId);
+    setItems(arr => arr.map((it,i) => i!==idx ? it : {
+      ...it,
+      prdId, prdName:(prd && prd.name)||"", unitPrice:(prd && prd.price)||0
+    }));
+  };
+
+  const setItem = (idx,key,val) => setItems(arr=>arr.map((it,i)=>i!==idx?it:{...it,[key]:val}));
+
+  const lineTotal  = it => (it.qty||0)*(it.unitPrice||0)*(1-(it.discount||0)/100);
+  const grandTotal = items.reduce((s,it)=>s+lineTotal(it),0);
+
+  const save = () => {
+    if (!items.length) { alert("En az 1 ürün ekleyin."); return; }
+    if (items.some(it=>!it.prdName.trim())) { alert("Her satır için ürün seçiniz."); return; }
+    const newTx = {id:uid(),customerId:cust.id,createdAt:new Date().toISOString(),status:"open",items,payments:[],readyDate,notes};
+    uTx([...tx,newTx]);
+    nav("txdetail",{txId:newTx.id});
+  };
+
+  return (
+    <div className="fin">
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+        <Btn onClick={()=>nav("cdetail",{cid:cust.id})} variant="ghost" size="sm">← Geri</Btn>
+        <h2 style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:20}}>Yeni İşlem</h2>
+      </div>
+
+      <div style={{background:"#E8EFF7",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:22}}>👤</span>
+        <div>
+          <div style={{fontWeight:700,color:C.p}}>{cust.name}</div>
+          <div style={{color:C.m,fontSize:12}}>{cust.phone}</div>
+        </div>
+      </div>
+
+      <Card title="Ürünler" action={<Btn onClick={()=>setItems(a=>[...a,newItem()])} variant="success" size="sm">+ Satır Ekle</Btn>}>
+        {items.map((it,idx) => {
+          const svc = cfg.svc.find(s=>s.id===it.svcId);
+          const svcItems = (svc && svc.items) || [];
+          return (
+            <div key={it.id} style={{padding:"16px",borderBottom:`1px solid ${C.b}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
+                <span style={{fontWeight:700,fontSize:13,color:C.p}}>Satır {idx+1}</span>
+                {items.length>1 && <Btn onClick={()=>setItems(a=>a.filter((_,j)=>j!==idx))} variant="danger" size="sm">✕ Çıkar</Btn>}
+              </div>
+
+              {/* 1. Hizmet Türü */}
+              <Field label="Hizmet Türü">
+                <select value={it.svcId} onChange={e=>selectSvc(idx,e.target.value)}>
+                  {cfg.svc.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+
+              {/* 2. Ürün — sadece seçili hizmetin ürünleri */}
+              <Field label="Ürün">
+                <select value={it.prdId} onChange={e=>selectPrd(idx,e.target.value)}>
+                  <option value="">— Ürün Seçin —</option>
+                  {svcItems.map(p=><option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>)}
+                </select>
+              </Field>
+
+              {/* Ürün adı manuel düzenleme */}
+              <Field label="Ürün Adı (düzenleyebilirsiniz)">
+                <input value={it.prdName} onChange={e=>setItem(idx,"prdName",e.target.value)} placeholder="Ürün adı…"/>
+              </Field>
+
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10}}>
+                <Field label="Adet">
+                  <input type="number" min="1" value={it.qty} onChange={e=>setItem(idx,"qty",Math.max(1,parseInt(e.target.value)||1))}/>
+                </Field>
+                <Field label="Birim Fiyat ₺">
+                  <input type="number" min="0" step="0.01" value={it.unitPrice} onChange={e=>setItem(idx,"unitPrice",parseFloat(e.target.value)||0)}/>
+                </Field>
+                <Field label="İndirim %">
+                  <input type="number" min="0" max="100" value={it.discount} onChange={e=>setItem(idx,"discount",Math.min(100,parseFloat(e.target.value)||0))}/>
+                </Field>
+                <Field label="Tutar">
+                  <div style={{padding:"9px 12px",background:"#F0EBE3",borderRadius:8,fontWeight:700,color:C.p}}>{fmt(lineTotal(it))}</div>
+                </Field>
+              </div>
+
+              <Field label="Not">
+                <input value={it.note||""} onChange={e=>setItem(idx,"note",e.target.value)} placeholder="Leke, özel durum vb."/>
+              </Field>
+            </div>
+          );
+        })}
+        <div style={{padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",background:"#FAFAF8"}}>
+          <span style={{fontWeight:700,color:C.p}}>Genel Toplam</span>
+          <span style={{fontWeight:800,fontSize:20,color:C.a}}>{fmt(grandTotal)}</span>
+        </div>
+      </Card>
+
+      <Card title="Ek Bilgiler">
+        <div style={{padding:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Hazır Olma Tarihi"><input type="date" value={readyDate} onChange={e=>setRD(e.target.value)} min={today()}/></Field>
+          <Field label="Genel Not"><input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Müşteriye özel not…"/></Field>
+        </div>
+      </Card>
+
+      <Btn onClick={save} variant="accent" size="lg" style={{width:"100%",justifyContent:"center",fontSize:15}}>
+        💾 İşlemi Kaydet ({fmt(grandTotal)})
+      </Btn>
+    </div>
+  );
+}
+
+// ── TRANSACTION DETAIL ────────────────────────────────────────────────────────
+function TxDetail({ cx, tx, cb, cfg, nav, pg, uTx, uCb }) {
+  const [payAmt,    setPayAmt]    = useState("");
+  const [payMethod, setPayMethod] = useState("Nakit");
+  const [payNote,   setPayNote]   = useState("");
+  const [showWa,    setShowWa]    = useState(false);
+  const [closeModal,setCloseModal]= useState(false);
+  const [delModal,  setDelModal]  = useState(false);
+
+  const t    = tx.find(t=>t.id===pg.txId);
+  const cust = t ? cx.find(c=>c.id===t.customerId) : null;
+  if (!t||!cust) return <div className="fin"><Btn onClick={()=>nav("home")} variant="ghost" size="sm">← Geri</Btn><Empty msg="İşlem bulunamadı"/></div>;
+
+  const {total,paid,balance,itemsCount,deliveredCount} = calcTx(t);
+
+  const deliverItem = itemId => {
+    const now = new Date().toISOString();
+    const upd = tx.map(tt=>tt.id!==t.id?tt:{...tt,items:tt.items.map(i=>i.id!==itemId?i:{...i,delivered:true,deliveredAt:now})});
+    const updTx = upd.find(tt=>tt.id===t.id);
+    uTx(updTx.items.every(i=>i.delivered) ? upd.map(tt=>tt.id!==t.id?tt:{...tt,status:"closed"}) : upd);
+  };
+
+  const addPayment = () => {
+    const amt = parseFloat(payAmt);
+    if (!amt||amt<=0) { alert("Geçerli bir tutar girin."); return; }
+    const pay = {id:uid(),amount:amt,date:new Date().toISOString(),method:payMethod,note:payNote};
+    uTx(tx.map(tt=>tt.id!==t.id?tt:{...tt,payments:[...(tt.payments||[]),pay]}));
+    uCb([...cb,{id:uid(),date:new Date().toISOString(),type:"in",amount:amt,category:"Tahsilat",description:`${cust.name} — #${t.id.slice(-6).toUpperCase()}${payNote?` • ${payNote}`:""}`}]);
+    setPayAmt(""); setPayNote("");
+  };
+
+  const waText = `Sayın ${cust.name},\n\nSeren Kuru Temizleme'den bilgilendirme:\n\nİşlem No: #${t.id.slice(-6).toUpperCase()}\nTarih: ${fdate(t.createdAt)}${t.readyDate?`\nHazır Tarihi: ${fdate(t.readyDate)}`:""}\n\nÜrünler: ${itemsCount} (${deliveredCount} teslim edildi)\nToplam: ${fmt(total)}\nÖdenen: ${fmt(paid)}\nKalan: ${fmt(balance)}\n\nİyi günler 🧺\nSeren Kuru Temizleme`;
+
+  return (
+    <div className="fin">
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+        <Btn onClick={()=>nav("cdetail",{cid:cust.id})} variant="ghost" size="sm">← {cust.name}</Btn>
+        <Btn onClick={()=>setCloseModal(true)} variant={t.status==="open"?"ghost":"success"} size="sm">{t.status==="open"?"🔒 Kapat":"🔓 Yeniden Aç"}</Btn>
+        <Btn onClick={()=>setDelModal(true)} variant="danger" size="sm">🗑 Sil</Btn>
+      </div>
+
+      <div style={{background:C.p,borderRadius:14,padding:"18px 20px",marginBottom:14,color:"#fff"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10,marginBottom:12}}>
+          <div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:19}}>İşlem #{t.id.slice(-6).toUpperCase()}</div>
+            <div style={{fontSize:12,opacity:0.75,marginTop:2}}>{cust.name} · {fdate(t.createdAt)}</div>
+            {t.readyDate && <div style={{fontSize:12,color:"#FAD89A",marginTop:2}}>🕐 Hazır: {fdate(t.readyDate)}</div>}
+            {t.notes     && <div style={{fontSize:12,opacity:0.8,marginTop:2}}>📝 {t.notes}</div>}
+          </div>
+          <Badge color={t.status==="open"?"warn":"success"}>{t.status==="open"?"Açık":"Kapalı"}</Badge>
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {[
+            {label:"Toplam",v:fmt(total),  bg:"rgba(255,255,255,0.12)"},
+            {label:"Ödendi",v:fmt(paid),   bg:"rgba(42,125,90,0.4)"},
+            {label:"Kalan", v:fmt(balance),bg:balance>0.01?"rgba(176,48,37,0.45)":"rgba(42,125,90,0.4)"},
+            {label:"Teslim",v:`${deliveredCount}/${itemsCount}`,bg:"rgba(255,255,255,0.12)"},
+          ].map((s,i)=>(
+            <div key={i} style={{background:s.bg,borderRadius:8,padding:"8px 12px"}}>
+              <div style={{opacity:0.72,fontSize:11}}>{s.label}</div>
+              <div style={{fontWeight:800,fontSize:16}}>{s.v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <Card title="Ürünler">
+        {(t.items||[]).map(it => {
+          const lt = (it.qty||0)*(it.unitPrice||0)*(1-(it.discount||0)/100);
+          return (
+            <div key={it.id} style={{padding:"14px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700}}>{it.prdName||"Ürün"}</span>
+                  <Badge color="primary">{it.svcName||"—"}</Badge>
+                  {it.delivered ? <Badge color="success">✅ Teslim</Badge> : <Badge color="warn">⏳ Bekliyor</Badge>}
+                </div>
+                <div style={{color:C.m,fontSize:12}}>
+                  {it.qty} adet × {fmt(it.unitPrice)}{it.discount>0?` · %${it.discount} indirim`:""}
+                  {it.note?` · 📝 ${it.note}`:""}
+                </div>
+                {it.delivered&&it.deliveredAt && <div style={{color:C.ok,fontSize:11,marginTop:2}}>{fdate(it.deliveredAt)}</div>}
+              </div>
+              <div style={{textAlign:"right",minWidth:90}}>
+                <div style={{fontWeight:800,color:C.p,fontSize:15,marginBottom:6}}>{fmt(lt)}</div>
+                {!it.delivered&&t.status==="open" && <Btn onClick={()=>deliverItem(it.id)} variant="success" size="sm">✓ Teslim Et</Btn>}
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+
+      {t.status==="open" && (
+        <Card title="Ödeme Al">
+          <div style={{padding:16}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Field label="Tutar (₺)">
+                <input type="number" min="0" step="0.01" value={payAmt} onChange={e=>setPayAmt(e.target.value)} placeholder={`Kalan: ${fmt(balance)}`}/>
+              </Field>
+              <Field label="Yöntem">
+                <select value={payMethod} onChange={e=>setPayMethod(e.target.value)}>
+                  <option>Nakit</option><option>Kredi Kartı</option><option>Banka Transferi</option><option>QR / POS</option>
+                </select>
+              </Field>
+            </div>
+            <Field label="Not"><input value={payNote} onChange={e=>setPayNote(e.target.value)} placeholder="Ödeme notu…"/></Field>
+            <Btn onClick={addPayment} variant="success" size="lg" style={{width:"100%",justifyContent:"center"}}>💵 Ödeme Ekle</Btn>
+          </div>
+        </Card>
+      )}
+
+      {(t.payments||[]).length>0 && (
+        <Card title="Ödeme Geçmişi">
+          {t.payments.map(pay=>(
+            <div key={pay.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <span style={{fontWeight:700,color:C.ok}}>{fmt(pay.amount)}</span>
+                <span style={{color:C.m,fontSize:12,marginLeft:8}}>{fdate(pay.date)} · {pay.method||"Nakit"}{pay.note?` · ${pay.note}`:""}</span>
+              </div>
+              <Btn onClick={()=>uTx(tx.map(tt=>tt.id!==t.id?tt:{...tt,payments:(tt.payments||[]).filter(p=>p.id!==pay.id)}))} variant="ghost" size="sm" style={{color:C.err,border:"none",fontSize:16}}>✕</Btn>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      <Card title="WhatsApp / SMS Mesajı">
+        <div style={{padding:14}}>
+          <Btn onClick={()=>setShowWa(!showWa)} variant="wa">{showWa?"Gizle":"📱 Mesaj Oluştur"}</Btn>
+          {showWa && (
+            <div style={{marginTop:10}}>
+              <textarea value={waText} readOnly rows={10} style={{resize:"none",background:"#F0FBF4",fontSize:13,lineHeight:1.6,marginBottom:8}}/>
+              <Btn onClick={()=>navigator.clipboard.writeText(waText).then(()=>alert("Kopyalandı!"))} variant="primary" size="sm">📋 Kopyala</Btn>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Modal open={closeModal} onClose={()=>setCloseModal(false)} title={t.status==="open"?"İşlemi Kapat":"Yeniden Aç"}>
+        <p style={{color:C.m,fontSize:14,marginBottom:18}}>{t.status==="open"?"Tamamlandı olarak işaretlensin mi?":"Yeniden açmak istiyor musunuz?"}</p>
+        <div style={{display:"flex",gap:10}}>
+          <Btn onClick={()=>{uTx(tx.map(tt=>tt.id!==t.id?tt:{...tt,status:t.status==="open"?"closed":"open"}));setCloseModal(false);}} variant="accent" style={{flex:1,justifyContent:"center"}}>Evet</Btn>
+          <Btn onClick={()=>setCloseModal(false)} variant="ghost" style={{flex:1,justifyContent:"center"}}>İptal</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={delModal} onClose={()=>setDelModal(false)} title="İşlemi Sil">
+        <p style={{color:C.m,fontSize:14,marginBottom:18}}>Bu işlemi kalıcı olarak silmek istiyor musunuz?</p>
+        <div style={{display:"flex",gap:10}}>
+          <Btn onClick={()=>{uTx(tx.filter(tt=>tt.id!==t.id));nav("cdetail",{cid:cust.id});}} variant="danger" style={{flex:1,justifyContent:"center"}}>Sil</Btn>
+          <Btn onClick={()=>setDelModal(false)} variant="ghost" style={{flex:1,justifyContent:"center"}}>İptal</Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// ── CASH ──────────────────────────────────────────────────────────────────────
+function Cash({ cb, uCb }) {
+  const CATS_IN  = ["Tahsilat","Diğer Gelir","Avans","Bozuk Para"];
+  const CATS_OUT = ["Kira","Personel Maaşı","Malzeme / Kimyasal","Elektrik","Su","Fatura","Kargo","Diğer Gider"];
+  const [form,   setForm]   = useState({type:"in",amount:"",category:"Tahsilat",description:"",date:today()});
+  const [filter, setFilter] = useState("all");
+  const [monthF, setMonthF] = useState(new Date().toISOString().slice(0,7));
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+  const save = () => {
+    if (!form.amount||!form.description.trim()) { alert("Tutar ve açıklama zorunludur."); return; }
+    uCb([...cb,{id:uid(),...form,amount:parseFloat(form.amount),createdAt:new Date().toISOString()}]);
+    setForm(f=>({...f,amount:"",description:""}));
+  };
+  const filtered = cb.filter(e=>filter==="all"||e.type===filter).filter(e=>e.date && e.date.startsWith(monthF)).sort((a,b)=>b.date.localeCompare(a.date));
+  const totalIn  = filtered.filter(e=>e.type==="in").reduce((s,e)=>s+e.amount,0);
+  const totalOut = filtered.filter(e=>e.type==="out").reduce((s,e)=>s+e.amount,0);
+  return (
+    <div className="fin">
+      <h2 style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:20,marginBottom:16}}>Kasa Defteri</h2>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+        <div style={{background:C.okb,borderRadius:10,padding:"12px 14px"}}>
+          <div style={{color:C.m,fontSize:11}}>Toplam Giriş</div>
+          <div style={{fontWeight:800,fontSize:17,color:C.ok}}>{fmt(totalIn)}</div>
+        </div>
+        <div style={{background:C.errb,borderRadius:10,padding:"12px 14px"}}>
+          <div style={{color:C.m,fontSize:11}}>Toplam Çıkış</div>
+          <div style={{fontWeight:800,fontSize:17,color:C.err}}>{fmt(totalOut)}</div>
+        </div>
+        <div style={{background:totalIn-totalOut>=0?C.okb:C.errb,borderRadius:10,padding:"12px 14px"}}>
+          <div style={{color:C.m,fontSize:11}}>Net Bakiye</div>
+          <div style={{fontWeight:800,fontSize:17,color:totalIn-totalOut>=0?C.ok:C.err}}>{fmt(totalIn-totalOut)}</div>
+        </div>
+      </div>
+      <Card title="Yeni Kayıt">
+        <div style={{padding:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <Field label="Tür">
+              <select value={form.type} onChange={e=>{set("type",e.target.value);set("category",e.target.value==="in"?"Tahsilat":"Kira");}}>
+                <option value="in">💚 Giriş (Gelir)</option>
+                <option value="out">🔴 Çıkış (Gider)</option>
+              </select>
+            </Field>
+            <Field label="Kategori">
+              <select value={form.category} onChange={e=>set("category",e.target.value)}>
+                {(form.type==="in"?CATS_IN:CATS_OUT).map(c=><option key={c}>{c}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <Field label="Tutar (₺)"><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/></Field>
+            <Field label="Tarih">    <input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/></Field>
+          </div>
+          <Field label="Açıklama *"><input value={form.description} onChange={e=>set("description",e.target.value)} placeholder="Ödeme veya gider açıklaması…"/></Field>
+          <Btn onClick={save} variant={form.type==="in"?"success":"danger"} size="lg" style={{width:"100%",justifyContent:"center"}}>{form.type==="in"?"+ Gelir Ekle":"− Gider Ekle"}</Btn>
+        </div>
+      </Card>
+      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{display:"flex",gap:4}}>
+          {[["all","Tümü"],["in","Gelir"],["out","Gider"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setFilter(k)} style={{padding:"6px 12px",borderRadius:8,border:`1.5px solid ${filter===k?C.p:C.b}`,background:filter===k?C.p:"transparent",color:filter===k?"#fff":C.t,fontWeight:600,fontSize:13,cursor:"pointer"}}>{l}</button>
+          ))}
+        </div>
+        <input type="month" value={monthF} onChange={e=>setMonthF(e.target.value)} style={{width:"auto",padding:"5px 10px"}}/>
+      </div>
+      <Card>
+        {filtered.length===0 ? <Empty/> : filtered.map(e=>(
+          <div key={e.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:2}}>
+                <span style={{fontWeight:700,color:e.type==="in"?C.ok:C.err}}>{e.type==="in"?"+":"-"}{fmt(e.amount)}</span>
+                <Badge color={e.type==="in"?"success":"danger"}>{e.category}</Badge>
+              </div>
+              <div style={{color:C.m,fontSize:12}}>{fdate(e.date)} · {e.description}</div>
+            </div>
+            <Btn onClick={()=>uCb(cb.filter(x=>x.id!==e.id))} variant="ghost" size="sm" style={{color:C.err,border:"none"}}>✕</Btn>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+// ── REPORTS ───────────────────────────────────────────────────────────────────
+function Reports({ cx, tx, nav }) {
+  const [rtype, setRtype] = useState("income");
+  const [month, setMonth] = useState(new Date().toISOString().slice(0,7));
+
+  const payRows = useMemo(()=>{
+    const rows=[];
+    tx.forEach(t=>{
+      const cust=cx.find(c=>c.id===t.customerId);
+      (t.payments||[]).forEach(p=>{
+        if(!(p.date && p.date.startsWith(month))) return;
+        rows.push({date:p.date.slice(0,10),amount:p.amount,customer:(cust && cust.name)||"?",method:p.method||"Nakit"});
+      });
+    });
+    return rows.sort((a,b)=>b.date.localeCompare(a.date));
+  },[tx,cx,month]);
+
+  const totalIncome = payRows.reduce((s,r)=>s+r.amount,0);
+  const byDay = useMemo(()=>{
+    const m={};
+    payRows.forEach(r=>{m[r.date]=(m[r.date]||0)+r.amount;});
+    return Object.entries(m).sort((a,b)=>b[0].localeCompare(a[0]));
+  },[payRows]);
+
+  const phoneList = [...cx].sort((a,b)=>a.name.localeCompare(b.name,"tr"));
+  const copyPhones = () => navigator.clipboard.writeText(phoneList.map(c=>`${c.name}\t${c.phone}${c.address?`\t${c.address}`:""}`).join("\n")).then(()=>alert(`${phoneList.length} müşteri kopyalandı!`));
+
+  const readyTxs = useMemo(()=>tx.filter(t=>t.readyDate&&t.status==="open").map(t=>{
+    const cust=cx.find(c=>c.id===t.customerId);
+    const{balance,deliveredCount,itemsCount}=calcTx(t);
+    const daysLeft=Math.ceil((new Date(t.readyDate)-new Date(today()))/(86400000));
+    return{...t,cust,balance,deliveredCount,itemsCount,daysLeft};
+  }).sort((a,b)=>new Date(a.readyDate)-new Date(b.readyDate)),[tx,cx]);
+
+  return (
+    <div className="fin">
+      <h2 style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:20,marginBottom:16}}>Raporlar</h2>
+      <div style={{display:"flex",gap:2,marginBottom:16,background:"#E8E2D9",borderRadius:10,padding:3}}>
+        {[["income","📈 Gelir"],["phones","📞 Telefonlar"],["ready","🕐 Hazır Bildirim"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setRtype(k)} style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",background:rtype===k?C.s:"transparent",color:rtype===k?C.p:C.m,fontWeight:700,fontSize:13,cursor:"pointer"}}>{l}</button>
+        ))}
+      </div>
+
+      {rtype==="income" && (
+        <div>
+          <div style={{marginBottom:14,maxWidth:200}}>
+            <Field label="Ay"><input type="month" value={month} onChange={e=>setMonth(e.target.value)}/></Field>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
+            <div style={{background:C.okb,borderRadius:10,padding:"14px 16px"}}>
+              <div style={{color:C.m,fontSize:11}}>Aylık Tahsilat</div>
+              <div style={{fontWeight:800,fontSize:19,color:C.ok}}>{fmt(totalIncome)}</div>
+              <div style={{color:C.m,fontSize:11}}>{payRows.length} ödeme</div>
+            </div>
+            <div style={{background:"#E8EFF7",borderRadius:10,padding:"14px 16px"}}>
+              <div style={{color:C.m,fontSize:11}}>Toplam Alacak</div>
+              <div style={{fontWeight:800,fontSize:19,color:C.p}}>{fmt(tx.reduce((s,t)=>{const{balance}=calcTx(t);return s+(balance>0?balance:0);},0))}</div>
+            </div>
+            <div style={{background:"#F0EBE3",borderRadius:10,padding:"14px 16px"}}>
+              <div style={{color:C.m,fontSize:11}}>Açık İşlem</div>
+              <div style={{fontWeight:800,fontSize:19,color:C.warn}}>{tx.filter(t=>t.status==="open").length}</div>
+            </div>
+          </div>
+          {byDay.length>0 && (
+            <Card title="Günlük Döküm" style={{marginBottom:14}}>
+              {byDay.map(([d,amt])=>(
+                <div key={d} style={{padding:"9px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",fontSize:13}}>
+                  <span style={{color:C.m}}>{fdate(d)}</span>
+                  <span style={{fontWeight:700,color:C.ok}}>{fmt(amt)}</span>
+                </div>
+              ))}
+              <div style={{padding:"10px 16px",display:"flex",justifyContent:"space-between",fontWeight:800,background:"#FAFAF8"}}>
+                <span>Toplam</span><span style={{color:C.ok}}>{fmt(totalIncome)}</span>
+              </div>
+            </Card>
+          )}
+          <Card title="Ödeme Detayları">
+            {payRows.length===0 ? <Empty msg="Bu ayda ödeme yok."/> : payRows.map((r,i)=>(
+              <div key={i} style={{padding:"10px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",fontSize:13}}>
+                <div>
+                  <span style={{fontWeight:700}}>{r.customer}</span>
+                  <span style={{color:C.m,fontSize:12,marginLeft:8}}>{fdate(r.date)} · {r.method}</span>
+                </div>
+                <span style={{fontWeight:700,color:C.ok}}>{fmt(r.amount)}</span>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
+
+      {rtype==="phones" && (
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <span style={{color:C.m,fontSize:13}}>{phoneList.length} müşteri</span>
+            <Btn onClick={copyPhones} variant="accent" size="sm">📋 Excel'e Kopyala</Btn>
+          </div>
+          <Card>
+            {phoneList.length===0 ? <Empty msg="Kayıtlı müşteri yok."/> : phoneList.map(c=>(
+              <div key={c.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13}}>
+                <div>
+                  <div style={{fontWeight:700}}>{c.name}</div>
+                  {c.address&&<div style={{color:C.m,fontSize:12}}>📍 {c.address}</div>}
+                </div>
+                <span style={{fontWeight:600,color:C.p}}>{c.phone}</span>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
+
+      {rtype==="ready" && (
+        <div>
+          <p style={{color:C.m,fontSize:13,marginBottom:12}}>Hazır tarihi tanımlı açık işlemler:</p>
+          <Card>
+            {readyTxs.length===0 ? <Empty msg="Hazır tarihi tanımlı açık işlem yok."/> : readyTxs.map(t=>(
+              <div key={t.id} className="hrow" onClick={()=>nav("txdetail",{txId:t.id})} style={{padding:"14px 16px",borderBottom:`1px solid ${C.b}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+                  <div>
+                    <div style={{fontWeight:700}}>{(t.cust && t.cust.name) || "?"}</div>
+                    <div style={{color:C.m,fontSize:12}}>{(t.cust && t.cust.phone) || ""} · #{t.id.slice(-6).toUpperCase()}</div>
+                  </div>
+                  <Badge color={t.daysLeft<0?"danger":t.daysLeft<=1?"warn":"success"}>
+                    {t.daysLeft<0?`${Math.abs(t.daysLeft)} gün gecikti`:t.daysLeft===0?"Bugün":t.daysLeft===1?"Yarın":`${t.daysLeft} gün kaldı`}
+                  </Badge>
+                </div>
+                <div style={{color:C.m,fontSize:12,marginTop:6}}>🕐 {fdate(t.readyDate)} · {t.deliveredCount}/{t.itemsCount} teslim · Kalan: {fmt(t.balance)}</div>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── SETTINGS ──────────────────────────────────────────────────────────────────
+function Settings({ cfg, uCfg, onExport, onImport, authUser, onLogout }) {
+  const [tab,       setTab]       = useState("svc");
+  const [selSvcId,  setSelSvcId]  = useState((cfg.svc[0] && cfg.svc[0].id)||"");
+  const [newSvcName,setNewSvcName]= useState("");
+  const [newPrd,    setNewPrd]    = useState({name:"",price:""});
+  const [editPrd,   setEditPrd]   = useState(null);
+  const [editSvc,   setEditSvc]   = useState(null);
+
+  const selSvc = cfg.svc.find(s=>s.id===selSvcId) || cfg.svc[0];
+  const users  = cfg.users || DEFAULT_USERS;
+  const uUsers = newUsers => uCfg({...cfg, users:newUsers});
+
+  const addSvc = () => {
+    if (!newSvcName.trim()) return;
+    const ns = {id:uid(), name:newSvcName.trim(), items:[]};
+    uCfg({...cfg, svc:[...cfg.svc, ns]});
+    setSelSvcId(ns.id);
+    setNewSvcName("");
+  };
+
+  const delSvc = (svcId) => {
+    if (!window.confirm("Bu hizmet türünü silmek istiyor musunuz?")) return;
+    const next = cfg.svc.filter(s=>s.id!==svcId);
+    uCfg({...cfg, svc:next});
+    setSelSvcId((next[0] && next[0].id)||"");
+  };
+
+  const addPrd = () => {
+    if (!newPrd.name.trim()) { alert("Ürün adı zorunludur."); return; }
+    uCfg({...cfg, svc:cfg.svc.map(s=>s.id!==selSvc.id ? s : {...s, items:[...s.items, {id:uid(), name:newPrd.name.trim(), price:parseFloat(newPrd.price)||0}]})});
+    setNewPrd({name:"",price:""});
+  };
+
+  const delPrd = (svcId, prdId) => {
+    uCfg({...cfg, svc:cfg.svc.map(s=>s.id!==svcId ? s : {...s, items:s.items.filter(p=>p.id!==prdId)})});
+  };
+
+  const saveEditPrd = () => {
+    uCfg({...cfg, svc:cfg.svc.map(s=>s.id!==editPrd.svcId ? s : {...s, items:s.items.map(p=>p.id!==editPrd.id ? p : {...p, name:editPrd.name, price:parseFloat(editPrd.price)||0})})});
+    setEditPrd(null);
+  };
+
+  const saveEditSvc = () => {
+    uCfg({...cfg, svc:cfg.svc.map(s=>s.id!==editSvc.id ? s : {...s, name:editSvc.name})});
+    setEditSvc(null);
+  };
+
+  return (
+    <div className="fin">
+      <h2 style={{fontFamily:"'Playfair Display',serif", color:C.p, fontSize:20, marginBottom:16}}>Ayarlar</h2>
+
+      <div style={{background:C.okb, border:`1.5px solid ${C.ok}`, borderRadius:12, padding:"12px 16px", marginBottom:14}}>
+        <div style={{fontWeight:700, color:C.ok, marginBottom:3}}>✅ Google Sheets Bağlı</div>
+        <div style={{color:C.m, fontSize:12}}>Tüm veriler otomatik olarak Google Sheets'e kaydediliyor.</div>
+      </div>
+
+      <div style={{display:"flex", gap:2, marginBottom:16, background:"#E8E2D9", borderRadius:10, padding:3}}>
+        {[["svc","🧺 Hizmetler"],["users","👥 Kullanıcılar"],["backup","💾 Yedek"]].map(([k,l]) => (
+          <button key={k} onClick={()=>setTab(k)}
+            style={{flex:1, padding:"8px 4px", borderRadius:8, border:"none", background:tab===k?C.s:"transparent", color:tab===k?C.p:C.m, fontWeight:700, fontSize:12, cursor:"pointer"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {tab === "svc" && (
+        <div>
+          <Card title="Hizmet Türleri ve Ürünleri">
+            <div style={{padding:"12px 16px", borderBottom:`1px solid ${C.b}`, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center"}}>
+              <select value={selSvcId} onChange={e=>setSelSvcId(e.target.value)} style={{flex:1, minWidth:160}}>
+                {cfg.svc.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              {selSvc && (
+                <div style={{display:"flex", gap:6}}>
+                  <Btn onClick={()=>setEditSvc({id:selSvc.id, name:selSvc.name})} variant="ghost" size="sm">✏️ Düzenle</Btn>
+                  <Btn onClick={()=>delSvc(selSvc.id)} variant="danger" size="sm">🗑</Btn>
+                </div>
+              )}
+            </div>
+
+            <div style={{padding:"10px 16px", borderBottom:`1px solid ${C.b}`, display:"flex", gap:8, background:"#FAFAF8"}}>
+              <input value={newSvcName} onChange={e=>setNewSvcName(e.target.value)}
+                placeholder="Yeni hizmet türü adı…" onKeyDown={e=>e.key==="Enter"&&addSvc()} style={{flex:1}}/>
+              <Btn onClick={addSvc} variant="success" size="sm">+ Hizmet Ekle</Btn>
+            </div>
+
+            {selSvc && (
+              <div>
+                <div style={{padding:"8px 16px", background:"#E8EFF7"}}>
+                  <span style={{fontWeight:700, color:C.p, fontSize:13}}>📦 {selSvc.name} — Ürün Listesi</span>
+                </div>
+                {(selSvc.items||[]).length === 0
+                  ? <Empty msg="Bu hizmete henüz ürün eklenmedi." />
+                  : (selSvc.items||[]).map(prd => (
+                      <div key={prd.id} style={{padding:"10px 16px", borderBottom:`1px solid ${C.b}`, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                        <div>
+                          <span style={{fontWeight:600}}>{prd.name}</span>
+                          <span style={{color:C.a, fontWeight:700, fontSize:13, marginLeft:10}}>{fmt(prd.price)}</span>
+                        </div>
+                        <div style={{display:"flex", gap:6}}>
+                          <Btn onClick={()=>setEditPrd({svcId:selSvc.id, id:prd.id, name:prd.name, price:prd.price.toString()})} variant="ghost" size="sm">✏️</Btn>
+                          <Btn onClick={()=>delPrd(selSvc.id, prd.id)} variant="danger" size="sm">Sil</Btn>
+                        </div>
+                      </div>
+                    ))
+                }
+                <div style={{padding:14}}>
+                  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8}}>
+                    <input value={newPrd.name}  onChange={e=>setNewPrd(f=>({...f,name:e.target.value}))}  placeholder="Ürün adı…"/>
+                    <input value={newPrd.price} onChange={e=>setNewPrd(f=>({...f,price:e.target.value}))} placeholder="Fiyat ₺" type="number" min="0"/>
+                  </div>
+                  <Btn onClick={addPrd} variant="success" style={{width:"100%", justifyContent:"center"}}>+ Ürün Ekle</Btn>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          <Modal open={!!editSvc} onClose={()=>setEditSvc(null)} title="Hizmet Türünü Düzenle">
+            {editSvc && (
+              <div>
+                <Field label="Hizmet Adı">
+                  <input value={editSvc.name} onChange={e=>setEditSvc(s=>({...s,name:e.target.value}))} placeholder="Hizmet adı"/>
+                </Field>
+                <div style={{display:"flex", gap:10}}>
+                  <Btn onClick={saveEditSvc} variant="accent" style={{flex:1, justifyContent:"center"}}>Kaydet</Btn>
+                  <Btn onClick={()=>setEditSvc(null)} variant="ghost" style={{flex:1, justifyContent:"center"}}>İptal</Btn>
+                </div>
+              </div>
+            )}
+          </Modal>
+
+          <Modal open={!!editPrd} onClose={()=>setEditPrd(null)} title="Ürünü Düzenle">
+            {editPrd && (
+              <div>
+                <Field label="Ürün Adı">
+                  <input value={editPrd.name} onChange={e=>setEditPrd(p=>({...p,name:e.target.value}))} placeholder="Ürün adı"/>
+                </Field>
+                <Field label="Fiyat (₺)">
+                  <input type="number" value={editPrd.price} onChange={e=>setEditPrd(p=>({...p,price:e.target.value}))} placeholder="0.00"/>
+                </Field>
+                <div style={{display:"flex", gap:10}}>
+                  <Btn onClick={saveEditPrd} variant="accent" style={{flex:1, justifyContent:"center"}}>Kaydet</Btn>
+                  <Btn onClick={()=>setEditPrd(null)} variant="ghost" style={{flex:1, justifyContent:"center"}}>İptal</Btn>
+                </div>
+              </div>
+            )}
+          </Modal>
+        </div>
+      )}
+
+      {tab === "users" && (
+        <SettingsUsers users={users} authUser={authUser} uUsers={uUsers} onLogout={onLogout}/>
+      )}
+
+      {tab === "backup" && (
+        <div style={{background:"#FEF0E4", border:`1.5px solid ${C.warn}`, borderRadius:12, padding:16}}>
+          <div style={{fontWeight:700, color:C.warn, marginBottom:6}}>💾 Yerel Yedek</div>
+          <div style={{color:"#7A3B00", fontSize:13, marginBottom:12}}>Google Sheets'e ek olarak bilgisayarınıza yedek alabilirsiniz.</div>
+          <div style={{display:"flex", gap:10, flexWrap:"wrap"}}>
+            <Btn onClick={onExport} variant="accent">💾 Yedek Al (.json)</Btn>
+            <label style={{display:"inline-flex", alignItems:"center", gap:6, background:C.p, color:"#fff", padding:"8px 16px", borderRadius:8, fontWeight:700, fontSize:14, cursor:"pointer"}}>
+              📂 Yedek Yükle
+              <input type="file" accept=".json" style={{display:"none"}} onChange={e=>{if(e.target.files[0])onImport(e.target.files[0]);e.target.value="";}}/>
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── SETTINGS USERS ────────────────────────────────────────────────────────────
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

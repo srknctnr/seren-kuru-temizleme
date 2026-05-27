@@ -494,24 +494,9 @@ function App() {
     setCx(newCxData);
     clearTimeout(timer.current);
     setSync("saving");
-    // Her durumda localStorage'a kaydet — GS başarısız olsa bile veri bu tarayıcıda korunur
     LC.set("cx", newCxData); LC.set("tx", tx); LC.set("cb", cb); LC.set("cfg", cfg);
     try {
       await gsWrite(token, {cx:newCxData, tx, cb, cfg});
-      // Gerçekten yazıldı mı? Doğrula (retry ile)
-      let gsSaved = false;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
-        try {
-          const verify = await gsRead(token);
-          if ((verify.cx || []).length >= newCxData.length) { gsSaved = true; break; }
-        } catch {}
-      }
-      if (!gsSaved) {
-        setSync("error");
-        setTimeout(() => setSync("idle"), 3000);
-        return {ok:false, localOnly:true, error:`Google Sheets doğrulaması başarısız oldu (${newCxData.length} müşteri). Veriler bu tarayıcıda korunuyor, sayfa yenilendiğinde tekrar denenecek.`};
-      }
       setSync("ok");
       setTimeout(() => setSync("idle"), 3000);
       return {ok:true};

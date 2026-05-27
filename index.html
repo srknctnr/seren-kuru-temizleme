@@ -478,6 +478,24 @@ function App() {
   const uCx  = d => { setCx(d);  saveAll(d, tx, cb, cfg); };
   const uTx  = d => { setTx(d);  saveAll(cx, d, cb, cfg); };
   const uCb  = d => { setCb(d);  saveAll(cx, tx, d, cfg); };
+
+  // Excel import için debounce'suz, anında GS'ye yazan fonksiyon
+  const importCx = useCallback(async (newCxData) => {
+    setCx(newCxData);
+    clearTimeout(timer.current);
+    setSync("saving");
+    LC.set("cx", newCxData); LC.set("tx", tx); LC.set("cb", cb); LC.set("cfg", cfg);
+    try {
+      await gsWrite(token, {cx:newCxData, tx, cb, cfg});
+      setSync("ok");
+      setTimeout(() => setSync("idle"), 3000);
+      return true;
+    } catch {
+      setSync("error");
+      setTimeout(() => setSync("idle"), 3000);
+      return false;
+    }
+  }, [token, tx, cb, cfg]);
   const uCfg = d => {
     const r = authUser?.role || "";
     const isAdmin = String(r).toUpperCase() === "ADMIN" || String(r).toLowerCase() === "admin";
@@ -526,7 +544,7 @@ function App() {
 
   const liveUser = authUser;
 
-  const ctx = { cx, tx, cb, cfg, nav, pg, uCx, uTx, uCb, uCfg, onExport, onImport, sync, authUser:liveUser, onLogout:handleLogout };
+  const ctx = { cx, tx, cb, cfg, nav, pg, uCx, uTx, uCb, uCfg, onExport, onImport, importCx, sync, authUser:liveUser, onLogout:handleLogout };
   const views = { home:Home, clist:CList, cform:CForm, cdetail:CDetail, newtx:NewTx, txdetail:TxDetail, cash:Cash, reports:Reports, settings:Settings };
   const View = views[view] || Home;
 
@@ -678,7 +696,7 @@ function Home({ cx, tx, nav }) {
 }
 
 // ── CUSTOMER LIST ─────────────────────────────────────────────────────────────
-function CList({ cx, tx, nav, uCx }) {
+function CList({ cx, tx, nav, uCx, importCx }) {
   const [q, setQ] = useState("");
   const [importResult, setImportResult] = useState(null);
   const fileRef = useRef(null);
@@ -690,7 +708,7 @@ function CList({ cx, tx, nav, uCx }) {
     if (!file) return;
     e.target.value = "";
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = async ev => {
       try {
         const wb = XLSX.read(ev.target.result, {type:"array"});
         const ws = wb.Sheets[wb.SheetNames[0]];
@@ -715,8 +733,13 @@ function CList({ cx, tx, nav, uCx }) {
           newCx.push({id:uid(), createdAt:new Date().toISOString(), name, phone, address});
           added++;
         });
-        if (added > 0) uCx(newCx);
-        setImportResult({added, skipped});
+        if (added > 0) {
+          setImportResult({added, skipped, saving:true});
+          const saved = await importCx(newCx);
+          setImportResult({added, skipped, saved});
+        } else {
+          setImportResult({added:0, skipped});
+        }
       } catch(err) {
         setImportResult({error:"Dosya okunamadı: " + err.message});
       }
@@ -757,15 +780,24 @@ function CList({ cx, tx, nav, uCx }) {
           );
         })}
       </Card>
-      <Modal open={!!importResult} onClose={()=>setImportResult(null)} title="Excel İçe Aktarma">
+      <Modal open={!!importResult} onClose={()=>!importResult?.saving && setImportResult(null)} title="Excel İçe Aktarma">
         {importResult && (importResult.error
           ? <p style={{color:C.err}}>{importResult.error}</p>
           : <div>
-              <p style={{color:C.ok,fontWeight:700,marginBottom:8}}>✅ {importResult.added} yeni müşteri eklendi.</p>
-              {importResult.skipped>0 && <p style={{color:C.m,fontSize:13}}>{importResult.skipped} kayıt atlandı (telefon zaten mevcut veya eksik bilgi).</p>}
+              {importResult.saving
+                ? <p style={{color:C.m,fontSize:14}}>⏳ {importResult.added} müşteri Google Sheets'e kaydediliyor…</p>
+                : <>
+                    <p style={{color:C.ok,fontWeight:700,marginBottom:8}}>✅ {importResult.added} yeni müşteri eklendi.</p>
+                    {importResult.skipped>0 && <p style={{color:C.m,fontSize:13,marginBottom:8}}>{importResult.skipped} kayıt atlandı (telefon zaten mevcut veya eksik bilgi).</p>}
+                    {importResult.added>0 && (importResult.saved
+                      ? <p style={{color:C.ok,fontSize:13}}>☁ Google Sheets'e kaydedildi.</p>
+                      : <p style={{color:C.warn,fontSize:13,fontWeight:700}}>⚠ Google Sheets'e kaydedilemedi. İnternet bağlantınızı kontrol edin.</p>
+                    )}
+                  </>
+              }
             </div>
         )}
-        <Btn onClick={()=>setImportResult(null)} variant="primary" style={{marginTop:16,width:"100%",justifyContent:"center"}}>Tamam</Btn>
+        {!importResult?.saving && <Btn onClick={()=>setImportResult(null)} variant="primary" style={{marginTop:16,width:"100%",justifyContent:"center"}}>Tamam</Btn>}
       </Modal>
     </div>
   );

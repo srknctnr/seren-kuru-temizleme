@@ -7,6 +7,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>* { box-sizing:border-box; margin:0; padding:0; } body { background:#F5F3EF; }</style>
 </head>
 <body>
@@ -172,6 +173,18 @@ async function gsLogin(phone, password) {
   const d = JSON.parse(txt || "{}");
   if (!r.ok || (d && d.ok === false)) throw new Error(d?.error || "Giriş başarısız");
   return d; // {ok:true, token, role, phone, fullName}
+}
+
+function exportCustomersXLSX(cx) {
+  const rows = [["Ad Soyad","Telefon","Adres"]];
+  [...cx].sort((a,b)=>a.name.localeCompare(b.name,"tr")).forEach(c => {
+    rows.push([c.name||"", c.phone||"", c.address||""]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{wch:30},{wch:20},{wch:40}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Müşteriler");
+  XLSX.writeFile(wb, `seren-musteriler-${today()}.xlsx`);
 }
 
 function exportJSON(cx,tx,cb,cfg) {
@@ -662,14 +675,62 @@ function Home({ cx, tx, nav }) {
 }
 
 // ── CUSTOMER LIST ─────────────────────────────────────────────────────────────
-function CList({ cx, tx, nav }) {
+function CList({ cx, tx, nav, uCx }) {
   const [q, setQ] = useState("");
+  const [importResult, setImportResult] = useState(null);
+  const fileRef = useRef(null);
+
   const filtered = cx.filter(c=>!q||c.name.toLowerCase().includes(q.toLowerCase())||c.phone.includes(q));
+
+  const handleImport = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = "";
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const wb = XLSX.read(ev.target.result, {type:"array"});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, {defval:""});
+        const getField = (row, ...keys) => {
+          for (const k of keys) {
+            const found = Object.keys(row).find(rk=>rk.trim().toLowerCase()===k.toLowerCase());
+            if (found) return String(row[found]).trim();
+          }
+          return "";
+        };
+        const existingPhones = new Set(cx.map(c=>c.phone.replace(/\s/g,"")));
+        let added = 0, skipped = 0;
+        const newCx = [...cx];
+        rows.forEach(row => {
+          const name    = getField(row,"ad soyad","name","isim","ad");
+          const phone   = getField(row,"telefon","phone","tel");
+          const address = getField(row,"adres","address");
+          if (!name || !phone) { skipped++; return; }
+          if (existingPhones.has(phone.replace(/\s/g,""))) { skipped++; return; }
+          existingPhones.add(phone.replace(/\s/g,""));
+          newCx.push({id:uid(), createdAt:new Date().toISOString(), name, phone, address});
+          added++;
+        });
+        if (added > 0) uCx(newCx);
+        setImportResult({added, skipped});
+      } catch(err) {
+        setImportResult({error:"Dosya okunamadı: " + err.message});
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   return (
     <div className="fin">
+      <input ref={fileRef} type="file" accept=".xlsx,.csv" style={{display:"none"}} onChange={handleImport}/>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
         <h2 style={{fontFamily:"'Playfair Display',serif",color:C.p,fontSize:20}}>Müşteriler ({cx.length})</h2>
-        <Btn onClick={()=>nav("cform")} variant="accent">+ Yeni Müşteri</Btn>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <Btn onClick={()=>exportCustomersXLSX(cx)} variant="ghost" size="sm">⬇ Excel'e Aktar</Btn>
+          <Btn onClick={()=>fileRef.current&&fileRef.current.click()} variant="ghost" size="sm">⬆ Excel'den Yükle</Btn>
+          <Btn onClick={()=>nav("cform")} variant="accent">+ Yeni Müşteri</Btn>
+        </div>
       </div>
       <div style={{marginBottom:12}}>
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Ad veya telefon ile filtrele…"/>
@@ -693,6 +754,16 @@ function CList({ cx, tx, nav }) {
           );
         })}
       </Card>
+      <Modal open={!!importResult} onClose={()=>setImportResult(null)} title="Excel İçe Aktarma">
+        {importResult && (importResult.error
+          ? <p style={{color:C.err}}>{importResult.error}</p>
+          : <div>
+              <p style={{color:C.ok,fontWeight:700,marginBottom:8}}>✅ {importResult.added} yeni müşteri eklendi.</p>
+              {importResult.skipped>0 && <p style={{color:C.m,fontSize:13}}>{importResult.skipped} kayıt atlandı (telefon zaten mevcut veya eksik bilgi).</p>}
+            </div>
+        )}
+        <Btn onClick={()=>setImportResult(null)} variant="primary" style={{marginTop:16,width:"100%",justifyContent:"center"}}>Tamam</Btn>
+      </Modal>
     </div>
   );
 }

@@ -16,7 +16,10 @@
     const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 
-const GS_URL = "https://script.google.com/macros/s/AKfycbypQzbcSHjFrNPA9E3weXvYx4WD-ehIlZ8FQq8mJelZzEXAFGZv9rSzbAd-UNhm1OassQ/exec";
+const DEFAULT_GS_URL = "https://script.google.com/macros/s/AKfycbypQzbcSHjFrNPA9E3weXvYx4WD-ehIlZ8FQq8mJelZzEXAFGZv9rSzbAd-UNhm1OassQ/exec";
+let _gsUrl = localStorage.getItem("seren_gsUrl") || DEFAULT_GS_URL;
+const getGsUrl = () => _gsUrl;
+const setGsUrl  = url => { _gsUrl = url; localStorage.setItem("seren_gsUrl", url); };
 
 const DEFAULT_USERS = [
   { id:"u1", name:"Admin", username:"admin", password:"admin1", role:"admin", active:true },
@@ -142,8 +145,8 @@ const LC = {
 };
 
 function gsUrlWithToken(token) {
-  if (!token) return GS_URL;
-  return `${GS_URL}?token=${encodeURIComponent(token)}`;
+  if (!token) return getGsUrl();
+  return `${getGsUrl()}?token=${encodeURIComponent(token)}`;
 }
 
 async function gsRead(token) {
@@ -165,7 +168,7 @@ async function gsWrite(token, data) {
 }
 
 async function gsLogin(phone, password) {
-  const r = await fetch(GS_URL, {
+  const r = await fetch(getGsUrl(), {
     method: "POST",
     body: JSON.stringify({ action: "login", phone, password })
   });
@@ -1567,6 +1570,9 @@ function Settings({ cfg, uCfg, onExport, onImport, authUser, onLogout }) {
   const [newPrd,    setNewPrd]    = useState({name:"",price:""});
   const [editPrd,   setEditPrd]   = useState(null);
   const [editSvc,   setEditSvc]   = useState(null);
+  const [gsInput,   setGsInput]   = useState(getGsUrl());
+  const [gsTest,    setGsTest]    = useState(null); // null | "testing" | "ok" | "error"
+  const isAdmin = authUser && ["admin","ADMIN"].includes(String(authUser.role));
 
   const selSvc = cfg.svc.find(s=>s.id===selSvcId) || cfg.svc[0];
   const users  = cfg.users || DEFAULT_USERS;
@@ -1613,11 +1619,11 @@ function Settings({ cfg, uCfg, onExport, onImport, authUser, onLogout }) {
 
       <div style={{background:C.okb, border:`1.5px solid ${C.ok}`, borderRadius:12, padding:"12px 16px", marginBottom:14}}>
         <div style={{fontWeight:700, color:C.ok, marginBottom:3}}>✅ Google Sheets Bağlı</div>
-        <div style={{color:C.m, fontSize:12}}>Tüm veriler otomatik olarak Google Sheets'e kaydediliyor.</div>
+        <div style={{color:C.m, fontSize:12, wordBreak:"break-all"}}>{getGsUrl()}</div>
       </div>
 
       <div style={{display:"flex", gap:2, marginBottom:16, background:"#E8E2D9", borderRadius:10, padding:3}}>
-        {[["svc","🧺 Hizmetler"],["users","👥 Kullanıcılar"],["backup","💾 Yedek"]].map(([k,l]) => (
+        {[["svc","🧺 Hizmetler"],["users","👥 Kullanıcılar"],["gs","🔗 Sheets"],["backup","💾 Yedek"]].map(([k,l]) => (
           <button key={k} onClick={()=>setTab(k)}
             style={{flex:1, padding:"8px 4px", borderRadius:8, border:"none", background:tab===k?C.s:"transparent", color:tab===k?C.p:C.m, fontWeight:700, fontSize:12, cursor:"pointer"}}>
             {l}
@@ -1712,6 +1718,61 @@ function Settings({ cfg, uCfg, onExport, onImport, authUser, onLogout }) {
 
       {tab === "users" && (
         <SettingsUsers users={users} authUser={authUser} uUsers={uUsers} onLogout={onLogout}/>
+      )}
+
+      {tab === "gs" && (
+        <div>
+          <Card title="Google Sheets Bağlantısı">
+            <div style={{padding:20}}>
+              <Field label="Apps Script URL">
+                <input
+                  value={gsInput}
+                  onChange={e=>{setGsInput(e.target.value);setGsTest(null);}}
+                  placeholder="https://script.google.com/macros/s/…/exec"
+                  style={{fontFamily:"monospace",fontSize:12}}
+                  disabled={!isAdmin}
+                />
+              </Field>
+              <div style={{color:C.m,fontSize:12,marginBottom:14}}>
+                Google Apps Script → Dağıt → Web uygulaması olarak dağıt → URL'yi kopyalayıp yapıştırın.
+              </div>
+              {gsTest==="ok"      && <div style={{color:C.ok,fontWeight:700,marginBottom:10}}>✅ Bağlantı başarılı.</div>}
+              {gsTest==="error"   && <div style={{color:C.err,fontWeight:700,marginBottom:10}}>❌ Bağlantı kurulamadı. URL'yi kontrol edin.</div>}
+              {gsTest==="testing" && <div style={{color:C.m,fontSize:13,marginBottom:10}}>⏳ Test ediliyor…</div>}
+              {isAdmin ? (
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <Btn onClick={async()=>{
+                    const url = gsInput.trim();
+                    if (!url) return;
+                    setGsTest("testing");
+                    try {
+                      const r = await fetch(url, {signal:AbortSignal.timeout(8000)});
+                      await r.text();
+                      setGsTest(r.ok ? "ok" : "error");
+                    } catch { setGsTest("error"); }
+                  }} variant="ghost" size="sm" disabled={!gsInput.trim()||gsTest==="testing"}>
+                    🔌 Bağlantıyı Test Et
+                  </Btn>
+                  <Btn onClick={()=>{
+                    const url = gsInput.trim();
+                    if (!url) { alert("URL boş olamaz."); return; }
+                    setGsUrl(url);
+                    alert("✅ Kaydedildi. Değişikliğin aktif olması için çıkış yapıp tekrar giriş yapın.");
+                  }} variant="accent" size="sm">
+                    💾 Kaydet
+                  </Btn>
+                  {gsInput !== DEFAULT_GS_URL && (
+                    <Btn onClick={()=>{setGsInput(DEFAULT_GS_URL);setGsTest(null);}} variant="ghost" size="sm">
+                      ↩ Varsayılana Dön
+                    </Btn>
+                  )}
+                </div>
+              ) : (
+                <p style={{color:C.m,fontSize:12}}>URL değiştirmek için admin yetkisi gerekir.</p>
+              )}
+            </div>
+          </Card>
+        </div>
       )}
 
       {tab === "backup" && (

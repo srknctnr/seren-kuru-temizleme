@@ -489,11 +489,11 @@ function App() {
       await gsWrite(token, {cx:newCxData, tx, cb, cfg});
       setSync("ok");
       setTimeout(() => setSync("idle"), 3000);
-      return true;
-    } catch {
+      return {ok:true};
+    } catch(e) {
       setSync("error");
       setTimeout(() => setSync("idle"), 3000);
-      return false;
+      return {ok:false, error: e instanceof Error ? e.message : String(e)};
     }
   }, [token, tx, cb, cfg]);
   const uCfg = d => {
@@ -734,14 +734,14 @@ function CList({ cx, tx, nav, uCx, importCx }) {
           added++;
         });
         if (added > 0) {
-          setImportResult({added, skipped, saving:true});
-          const saved = await importCx(newCx);
-          setImportResult({added, skipped, saved});
+          setImportResult({added, skipped, saving:true, pendingCx:newCx});
+          const result = await importCx(newCx);
+          setImportResult({added, skipped, pendingCx:newCx, ...result});
         } else {
-          setImportResult({added:0, skipped});
+          setImportResult({added:0, skipped, ok:true});
         }
       } catch(err) {
-        setImportResult({error:"Dosya okunamadı: " + err.message});
+        setImportResult({readError: err instanceof Error ? err.message : String(err)});
       }
     };
     reader.readAsArrayBuffer(file);
@@ -781,21 +781,30 @@ function CList({ cx, tx, nav, uCx, importCx }) {
         })}
       </Card>
       <Modal open={!!importResult} onClose={()=>!importResult?.saving && setImportResult(null)} title="Excel İçe Aktarma">
-        {importResult && (importResult.error
-          ? <p style={{color:C.err}}>{importResult.error}</p>
-          : <div>
-              {importResult.saving
-                ? <p style={{color:C.m,fontSize:14}}>⏳ {importResult.added} müşteri Google Sheets'e kaydediliyor…</p>
-                : <>
-                    <p style={{color:C.ok,fontWeight:700,marginBottom:8}}>✅ {importResult.added} yeni müşteri eklendi.</p>
-                    {importResult.skipped>0 && <p style={{color:C.m,fontSize:13,marginBottom:8}}>{importResult.skipped} kayıt atlandı (telefon zaten mevcut veya eksik bilgi).</p>}
-                    {importResult.added>0 && (importResult.saved
-                      ? <p style={{color:C.ok,fontSize:13}}>☁ Google Sheets'e kaydedildi.</p>
-                      : <p style={{color:C.warn,fontSize:13,fontWeight:700}}>⚠ Google Sheets'e kaydedilemedi. İnternet bağlantınızı kontrol edin.</p>
-                    )}
-                  </>
-              }
-            </div>
+        {importResult && (
+          importResult.readError
+            ? <p style={{color:C.err,fontSize:13}}>❌ Dosya okunamadı: {importResult.readError}</p>
+            : <div>
+                {importResult.saving
+                  ? <p style={{color:C.m,fontSize:14}}>⏳ {importResult.added} müşteri Google Sheets'e kaydediliyor…</p>
+                  : <>
+                      <p style={{color:C.ok,fontWeight:700,marginBottom:8}}>✅ {importResult.added} yeni müşteri eklendi.</p>
+                      {importResult.skipped>0 && <p style={{color:C.m,fontSize:13,marginBottom:8}}>{importResult.skipped} kayıt atlandı (telefon zaten mevcut veya eksik bilgi).</p>}
+                      {importResult.added>0 && (importResult.ok
+                        ? <p style={{color:C.ok,fontSize:13}}>☁ Google Sheets'e kaydedildi.</p>
+                        : <div style={{background:C.errb,borderRadius:8,padding:"10px 12px",marginTop:4}}>
+                            <p style={{color:C.warn,fontSize:13,fontWeight:700,marginBottom:4}}>⚠ Google Sheets'e kaydedilemedi.</p>
+                            {importResult.error && <p style={{color:C.err,fontSize:11,fontFamily:"monospace",marginBottom:8,wordBreak:"break-all"}}>{importResult.error}</p>}
+                            <Btn onClick={async()=>{
+                              setImportResult(p=>({...p,saving:true}));
+                              const r = await importCx(importResult.pendingCx);
+                              setImportResult(p=>({...p,...r,saving:false}));
+                            }} variant="accent" size="sm">🔄 Tekrar Kaydet</Btn>
+                          </div>
+                      )}
+                    </>
+                }
+              </div>
         )}
         {!importResult?.saving && <Btn onClick={()=>setImportResult(null)} variant="primary" style={{marginTop:16,width:"100%",justifyContent:"center"}}>Tamam</Btn>}
       </Modal>

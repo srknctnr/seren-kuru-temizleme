@@ -150,7 +150,9 @@ function gsUrlWithToken(token) {
 }
 
 async function gsRead(token) {
-  const r = await fetch(gsUrlWithToken(token));
+  const url = gsUrlWithToken(token);
+  const sep = url.includes('?') ? '&' : '?';
+  const r = await fetch(`${url}${sep}_t=${Date.now()}`);
   const txt = await r.text();
   const d = JSON.parse(txt || "{}");
   if (!r.ok) throw new Error("HTTP " + r.status);
@@ -496,13 +498,19 @@ function App() {
     LC.set("cx", newCxData); LC.set("tx", tx); LC.set("cb", cb); LC.set("cfg", cfg);
     try {
       await gsWrite(token, {cx:newCxData, tx, cb, cfg});
-      // Gerçekten yazıldı mı? Doğrula
-      const verify = await gsRead(token);
-      const gsSaved = (verify.cx || []).length >= newCxData.length;
+      // Gerçekten yazıldı mı? Doğrula (retry ile)
+      let gsSaved = false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
+        try {
+          const verify = await gsRead(token);
+          if ((verify.cx || []).length >= newCxData.length) { gsSaved = true; break; }
+        } catch {}
+      }
       if (!gsSaved) {
         setSync("error");
         setTimeout(() => setSync("idle"), 3000);
-        return {ok:false, localOnly:true, error:`Google Sheets veri sınırı aşıldı (${newCxData.length} müşteri çok büyük). Veriler bu tarayıcıda korunuyor.`};
+        return {ok:false, localOnly:true, error:`Google Sheets doğrulaması başarısız oldu (${newCxData.length} müşteri). Veriler bu tarayıcıda korunuyor, sayfa yenilendiğinde tekrar denenecek.`};
       }
       setSync("ok");
       setTimeout(() => setSync("idle"), 3000);

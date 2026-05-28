@@ -489,22 +489,76 @@ function App() {
   const uTx  = d => { setTx(d);  saveAll(cx, d, cb, cfg); };
   const uCb  = d => { setCb(d);  saveAll(cx, tx, d, cfg); };
 
-  // Excel import için debounce'suz, anında GS'ye yazan fonksiyon
-  const importCx = useCallback(async (newCxData) => {
-    setCx(newCxData);
+  // Excel import: chunk + verify + rollback mantığıyla GS'ye kaydet
+  // existingCx: mevcut müşteriler, newCustomers: eklenecek yeni müşteriler, onProgress: ilerleme callback'i
+  const importCx = useCallback(async (existingCx, newCustomers, onProgress) => {
     clearTimeout(timer.current);
     setSync("saving");
-    LC.set("cx", newCxData); LC.set("tx", tx); LC.set("cb", cb); LC.set("cfg", cfg);
-    try {
-      await gsWrite(token, {cx:newCxData, tx, cb, cfg});
-      setSync("ok");
-      setTimeout(() => setSync("idle"), 3000);
-      return {ok:true};
-    } catch(e) {
-      setSync("error");
-      setTimeout(() => setSync("idle"), 3000);
-      return {ok:false, localOnly:true, error: e instanceof Error ? e.message : String(e)};
+    // Tüm yeni müşterileri yerel state'e ve localStorage'a hemen yaz — GS başarısız olsa bile yerel veride kalsın
+    const allLocal = [...existingCx, ...newCustomers];
+    setCx(allLocal);
+    LC.set("cx", allLocal); LC.set("tx", tx); LC.set("cb", cb); LC.set("cfg", cfg);
+
+    const CHUNK = 50;
+    const totalChunks = Math.ceil(newCustomers.length / CHUNK);
+    let lastGoodCx = [...existingCx];
+    let gsSaved = 0;
+
+    for (let i = 0; i < newCustomers.length; i += CHUNK) {
+      const chunk = newCustomers.slice(i, i + CHUNK);
+      const attemptCx = [...lastGoodCx, ...chunk];
+      const chunkIdx = Math.floor(i / CHUNK) + 1;
+      if (onProgress) onProgress({savingChunk:chunkIdx, totalChunks, gsSaved});
+
+      try {
+        await gsWrite(token, {cx:attemptCx, tx, cb, cfg});
+        // Verify with cache-busting + retry
+        let savedCount = 0;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (attempt > 0) await new Promise(r => setTimeout(r, 800));
+          try {
+            const verify = await gsRead(token);
+            savedCount = (verify.cx || []).length;
+            if (savedCount >= attemptCx.length) break;
+          } catch {}
+        }
+
+        if (savedCount >= attemptCx.length) {
+          lastGoodCx = attemptCx;
+          gsSaved += chunk.length;
+        } else {
+          // Bu chunk GS'ye sığmadı — son iyi durumu geri yükle
+          try { await gsWrite(token, {cx:lastGoodCx, tx, cb, cfg}); } catch {}
+          setSync("error");
+          setTimeout(() => setSync("idle"), 3000);
+          return {
+            ok: false,
+            gsSaved,
+            partial: gsSaved > 0,
+            localOnly: true,
+            error: `Google Sheets veri sınırına ulaşıldı. ${gsSaved} / ${newCustomers.length} müşteri Google Sheets'e kaydedildi.`
+          };
+        }
+      } catch(e) {
+        // Network/yazma hatası — rollback dene
+        try { await gsWrite(token, {cx:lastGoodCx, tx, cb, cfg}); } catch {}
+        setSync("error");
+        setTimeout(() => setSync("idle"), 3000);
+        return {
+          ok: false,
+          gsSaved,
+          partial: gsSaved > 0,
+          localOnly: true,
+          error: gsSaved > 0
+            ? `${gsSaved} müşteri kaydedildi, sonra hata: ${e instanceof Error ? e.message : String(e)}`
+            : (e instanceof Error ? e.message : String(e))
+        };
+      }
     }
+
+    setSync("ok");
+    setTimeout(() => setSync("idle"), 3000);
+    return {ok:true, gsSaved};
   }, [token, tx, cb, cfg]);
   const uCfg = d => {
     const r = authUser?.role || "";
@@ -746,30 +800,22 @@ function CList({ cx, tx, nav, uCx, importCx }) {
           setImportResult({added:0, skipped, ok:true});
           return;
         }
-        const CHUNK = 200;
-        const totalChunks = Math.ceil(newCustomers.length / CHUNK);
-        let gsSaved = 0;
-        let currentCx = [...cx];
-        for (let i = 0; i < newCustomers.length; i += CHUNK) {
-          const chunk = newCustomers.slice(i, i + CHUNK);
-          currentCx = [...currentCx, ...chunk];
-          const chunkIdx = Math.floor(i / CHUNK) + 1;
-          setImportResult({added:newCustomers.length, gsSaved, savingChunk:chunkIdx, totalChunks, skipped, saving:true});
-          const result = await importCx(currentCx);
-          if (!result.ok) {
-            setImportResult({
-              added:newCustomers.length, gsSaved, skipped,
-              partial: gsSaved > 0,
-              localOnly:true,
-              error: gsSaved > 0
-                ? `${gsSaved} müşteri Google Sheets'e kaydedildi, kalan ${newCustomers.length - gsSaved} müşteri yalnızca bu tarayıcıda.`
-                : result.error
-            });
-            return;
-          }
-          gsSaved += chunk.length;
+        setImportResult({added:newCustomers.length, gsSaved:0, savingChunk:1, totalChunks:1, skipped, saving:true});
+        const result = await importCx(cx, newCustomers, progress => {
+          setImportResult({added:newCustomers.length, gsSaved:progress.gsSaved, savingChunk:progress.savingChunk, totalChunks:progress.totalChunks, skipped, saving:true});
+        });
+        if (result.ok) {
+          setImportResult({added:newCustomers.length, gsSaved:result.gsSaved, skipped, ok:true});
+        } else {
+          setImportResult({
+            added:newCustomers.length,
+            gsSaved: result.gsSaved || 0,
+            skipped,
+            partial: (result.gsSaved || 0) > 0,
+            localOnly: result.localOnly,
+            error: result.error
+          });
         }
-        setImportResult({added:newCustomers.length, gsSaved, skipped, ok:true});
       } catch(err) {
         setImportResult({readError: err instanceof Error ? err.message : String(err)});
       }

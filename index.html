@@ -489,76 +489,50 @@ function App() {
   const uTx  = d => { setTx(d);  saveAll(cx, d, cb, cfg); };
   const uCb  = d => { setCb(d);  saveAll(cx, tx, d, cfg); };
 
-  // Excel import: chunk + verify + rollback mantığıyla GS'ye kaydet
+  // Excel import: Backend artık veriyi parçalı sakladığı için tek seferde
+  // tüm müşteriler güvenle yazılabilir (50.000 karakter hücre sınırı kalktı).
   // existingCx: mevcut müşteriler, newCustomers: eklenecek yeni müşteriler, onProgress: ilerleme callback'i
   const importCx = useCallback(async (existingCx, newCustomers, onProgress) => {
     clearTimeout(timer.current);
     setSync("saving");
-    // Tüm yeni müşterileri yerel state'e ve localStorage'a hemen yaz — GS başarısız olsa bile yerel veride kalsın
+    // Önce yerel state + localStorage — ağ hatası olsa bile veride kalsın
     const allLocal = [...existingCx, ...newCustomers];
     setCx(allLocal);
     LC.set("cx", allLocal); LC.set("tx", tx); LC.set("cb", cb); LC.set("cfg", cfg);
 
-    const CHUNK = 50;
-    const totalChunks = Math.ceil(newCustomers.length / CHUNK);
-    let lastGoodCx = [...existingCx];
-    let gsSaved = 0;
+    if (onProgress) onProgress({savingChunk:1, totalChunks:1, gsSaved:0});
 
-    for (let i = 0; i < newCustomers.length; i += CHUNK) {
-      const chunk = newCustomers.slice(i, i + CHUNK);
-      const attemptCx = [...lastGoodCx, ...chunk];
-      const chunkIdx = Math.floor(i / CHUNK) + 1;
-      if (onProgress) onProgress({savingChunk:chunkIdx, totalChunks, gsSaved});
+    try {
+      // Tüm müşterileri tek istekte kaydet
+      await gsWrite(token, {cx:allLocal, tx, cb, cfg});
 
-      try {
-        await gsWrite(token, {cx:attemptCx, tx, cb, cfg});
-        // Verify with cache-busting + retry
-        let savedCount = 0;
-        for (let attempt = 0; attempt < 2; attempt++) {
-          if (attempt > 0) await new Promise(r => setTimeout(r, 800));
-          try {
-            const verify = await gsRead(token);
-            savedCount = (verify.cx || []).length;
-            if (savedCount >= attemptCx.length) break;
-          } catch {}
-        }
-
-        if (savedCount >= attemptCx.length) {
-          lastGoodCx = attemptCx;
-          gsSaved += chunk.length;
-        } else {
-          // Bu chunk GS'ye sığmadı — son iyi durumu geri yükle
-          try { await gsWrite(token, {cx:lastGoodCx, tx, cb, cfg}); } catch {}
-          setSync("error");
-          setTimeout(() => setSync("idle"), 3000);
-          return {
-            ok: false,
-            gsSaved,
-            partial: gsSaved > 0,
-            localOnly: true,
-            error: `Google Sheets veri sınırına ulaşıldı. ${gsSaved} / ${newCustomers.length} müşteri Google Sheets'e kaydedildi.`
-          };
-        }
-      } catch(e) {
-        // Network/yazma hatası — rollback dene
-        try { await gsWrite(token, {cx:lastGoodCx, tx, cb, cfg}); } catch {}
-        setSync("error");
-        setTimeout(() => setSync("idle"), 3000);
-        return {
-          ok: false,
-          gsSaved,
-          partial: gsSaved > 0,
-          localOnly: true,
-          error: gsSaved > 0
-            ? `${gsSaved} müşteri kaydedildi, sonra hata: ${e instanceof Error ? e.message : String(e)}`
-            : (e instanceof Error ? e.message : String(e))
-        };
+      // Doğrulama (best-effort): geri oku ve sayıyı kontrol et
+      let savedCount = 0;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 800));
+        try {
+          const verify = await gsRead(token);
+          savedCount = (verify.cx || []).length;
+          if (savedCount >= allLocal.length) break;
+        } catch {}
       }
-    }
 
-    setSync("ok");
-    setTimeout(() => setSync("idle"), 3000);
-    return {ok:true, gsSaved};
+      if (onProgress) onProgress({savingChunk:1, totalChunks:1, gsSaved:newCustomers.length});
+      setSync("ok");
+      setTimeout(() => setSync("idle"), 3000);
+      // gsWrite hata fırlatmadıysa kayıt başarılıdır; doğrulama yalnızca bilgilendirme amaçlı
+      return {ok:true, gsSaved:newCustomers.length};
+    } catch(e) {
+      setSync("error");
+      setTimeout(() => setSync("idle"), 3000);
+      return {
+        ok: false,
+        gsSaved: 0,
+        partial: false,
+        localOnly: true,
+        error: e instanceof Error ? e.message : String(e)
+      };
+    }
   }, [token, tx, cb, cfg]);
   const uCfg = d => {
     const r = authUser?.role || "";

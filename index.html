@@ -16,8 +16,12 @@
     const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 
-const DEFAULT_GS_URL = "https://script.google.com/macros/s/AKfycbypQzbcSHjFrNPA9E3weXvYx4WD-ehIlZ8FQq8mJelZzEXAFGZv9rSzbAd-UNhm1OassQ/exec";
-let _gsUrl = localStorage.getItem("seren_gsUrl") || DEFAULT_GS_URL;
+const DEFAULT_GS_URL = "https://script.google.com/macros/s/AKfycbzsf8tIYbAWRjY9jaytrPMpix7Ea6mhjTAqeyZSNVgNMENr7cwXrzse04ZLUNG3ZF-OYQ/exec";
+// Eski dağıtım URL'leri — herhangi bir tarayıcıda kayıtlıysa yeni URL'ye taşı
+const OLD_GS_URLS = ["https://script.google.com/macros/s/AKfycbypQzbcSHjFrNPA9E3weXvYx4WD-ehIlZ8FQq8mJelZzEXAFGZv9rSzbAd-UNhm1OassQ/exec"];
+let _savedGsUrl = localStorage.getItem("seren_gsUrl");
+if (_savedGsUrl && OLD_GS_URLS.indexOf(_savedGsUrl) !== -1) { localStorage.removeItem("seren_gsUrl"); _savedGsUrl = null; }
+let _gsUrl = _savedGsUrl || DEFAULT_GS_URL;
 const getGsUrl = () => _gsUrl;
 const setGsUrl  = url => { _gsUrl = url; localStorage.setItem("seren_gsUrl", url); };
 

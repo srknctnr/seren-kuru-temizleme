@@ -14,10 +14,30 @@
 var DATA_SHEET = "SerenData";
 var CHUNK_SIZE = 40000; // hücre başına güvenli karakter sayısı (limit 50.000)
 
+var APP_VERSION = "v2-chunked-2026-06-10"; // canlı kod doğrulaması için sürüm etiketi
+
 function doGet(e) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureAuthSheets_(ss);
   ensureAdminSeed_(ss);
+
+  // PING: kimlik doğrulaması gerektirmez — hangi kodun canlı olduğunu ve
+  // sayfada gerçekte kaç müşteri olduğunu doğrulamak için. Adres: ...exec?ping=1
+  if (e && e.parameter && e.parameter.ping) {
+    var data = readData_(ss);
+    var sheet = ss.getSheetByName(DATA_SHEET);
+    var cells = sheet ? sheet.getLastRow() : 0;
+    var musteriler = ss.getSheetByName("Musteriler");
+    var musteriRows = musteriler ? Math.max(0, musteriler.getLastRow() - 1) : 0;
+    return jsonOut_({
+      ok: true,
+      version: APP_VERSION,
+      customersInData: (data.cx || []).length,
+      customersInMusterilerSheet: musteriRows,
+      dataCells: cells,
+      time: new Date().toISOString()
+    });
+  }
 
   var token = getTokenFromRequest_(e);
   var session = verifySession_(ss, token);

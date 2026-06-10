@@ -184,6 +184,39 @@ async function gsLogin(phone, password) {
   return d; // {ok:true, token, role, phone, fullName}
 }
 
+// Backend kullanıcı yönetimi aksiyonlarını çağırır (token query param, action body içinde)
+async function gsAdmin(token, action, payload) {
+  const r = await fetch(gsUrlWithToken(token), {
+    method: "POST",
+    body: JSON.stringify(Object.assign({ action }, payload || {}))
+  });
+  const txt = await r.text();
+  const d = JSON.parse(txt || "{}");
+  if (!r.ok || (d && d.ok === false)) throw new Error((d && d.error) || "İşlem başarısız");
+  return d;
+}
+
+// ── ROL & ERİŞİM YARDIMCILARI ──────────────────────────────────────────────────
+// Backend rolleri: ADMIN / STAFF. Arayüzde: Yönetici / Kullanıcı.
+const isAdminRole = r => ["ADMIN","admin"].includes(String(r || ""));
+const roleLabel   = r => isAdminRole(r) ? "Yönetici" : "Kullanıcı";
+
+// Sayfa-bazlı erişim altyapısı (ileride genişletilecek).
+// Değerler: "all" = herkes, "admin" = yalnız yönetici, ["role", ...] = belirli roller.
+// Şimdilik tüm sayfalar herkese açık; ilerleyen adımda kullanıcı/rol bazlı kısıtlanacak.
+const PAGE_ACCESS = {
+  home:"all", clist:"all", cform:"all", cdetail:"all",
+  newtx:"all", txdetail:"all", cash:"all", reports:"all", settings:"all",
+};
+const canAccess = (user, view) => {
+  const rule = PAGE_ACCESS[view] || "all";
+  if (rule === "all") return true;
+  if (isAdminRole(user && user.role)) return true; // admin her sayfaya erişir
+  if (rule === "admin") return false;
+  if (Array.isArray(rule)) return rule.includes(String(user && user.role));
+  return true;
+};
+
 function exportCustomersXLSX(cx) {
   const rows = [["Ad Soyad","Telefon","Adres"]];
   [...cx].sort((a,b)=>a.name.localeCompare(b.name,"tr")).forEach(c => {
@@ -586,16 +619,19 @@ function App() {
 
   const liveUser = authUser;
 
-  const ctx = { cx, tx, cb, cfg, nav, pg, uCx, uTx, uCb, uCfg, onExport, onImport, importCx, sync, authUser:liveUser, onLogout:handleLogout };
+  const ctx = { cx, tx, cb, cfg, nav, pg, uCx, uTx, uCb, uCfg, onExport, onImport, importCx, sync, authUser:liveUser, token, onLogout:handleLogout };
   const views = { home:Home, clist:CList, cform:CForm, cdetail:CDetail, newtx:NewTx, txdetail:TxDetail, cash:Cash, reports:Reports, settings:Settings };
   const View = views[view] || Home;
+  const allowed = canAccess(liveUser, view);
 
   return (
     <div style={{fontFamily:"'Nunito',sans-serif",background:C.bg,minHeight:"100vh",color:C.t}}>
       <style>{CSS}</style>
       <Nav view={view} nav={nav} syncStatus={sync} authUser={liveUser} onLogout={handleLogout} />
       <div style={{maxWidth:960,margin:"0 auto",padding:"72px 14px 60px"}}>
-        <View {...ctx} />
+        {allowed
+          ? <View {...ctx} />
+          : <div className="fin"><Empty msg="Bu sayfaya erişim yetkiniz yok." /><Btn onClick={()=>nav("home")} variant="ghost" size="sm" style={{marginTop:12}}>← Ana Sayfa</Btn></div>}
       </div>
     </div>
   );
@@ -910,109 +946,150 @@ function CForm({ cx, nav, pg, uCx }) {
 }
 
 // ── SETTINGS USERS ────────────────────────────────────────────────────────────
-function SettingsUsers({ users, authUser, uUsers, onLogout }) {
-  const isAdmin = (authUser && authUser.role) === "admin";
-  const [newUser, setNewUser] = useState({name:"",username:"",password:"",role:"user"});
+function SettingsUsers({ authUser, token, onLogout }) {
+  const isAdmin = isAdminRole(authUser && authUser.role);
+  const myPhone = String((authUser && authUser.id) || "");
+
+  const [list, setList]     = useState(null);   // null = yükleniyor
+  const [loadErr, setLoadErr] = useState("");
+  const [busy, setBusy]     = useState(false);
+  const [newUser, setNewUser]   = useState({phone:"",fullName:"",password:"",role:"STAFF"});
   const [editUser, setEditUser] = useState(null);
-  const [pwModal, setPwModal] = useState(false);
-  const [pw, setPw] = useState({old:"",n1:"",n2:""});
-  const [pwErr, setPwErr] = useState("");
+  const [pwModal, setPwModal]   = useState(false);
+  const [pw, setPw]             = useState({n1:"",n2:""});
+  const [pwErr, setPwErr]       = useState("");
 
-  const addUser = () => {
-    if (!newUser.name.trim()||!newUser.username.trim()||!newUser.password.trim()) { alert("Ad, kullanıcı adı ve şifre zorunludur."); return; }
-    if (users.find(u=>u.username===newUser.username.trim())) { alert("Bu kullanıcı adı zaten kullanılıyor."); return; }
-    uUsers([...users,{id:uid(),...newUser,name:newUser.name.trim(),username:newUser.username.trim(),password:newUser.password.trim(),active:true}]);
-    setNewUser({name:"",username:"",password:"",role:"user"});
+  const load = useCallback(async () => {
+    setLoadErr("");
+    try {
+      const d = await gsAdmin(token, "admin_listUsers", {});
+      setList(d.users || []);
+    } catch(e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+      setList([]);
+    }
+  }, [token]);
+
+  useEffect(() => { if (isAdmin) load(); }, [isAdmin, load]);
+
+  if (!isAdmin) return <Empty msg="Bu sayfaya erişim yetkiniz yok." />;
+
+  const addUser = async () => {
+    const phone = newUser.phone.trim();
+    const pwd = newUser.password.trim();
+    if (!phone) { alert("Kullanıcı adı (telefon) zorunludur."); return; }
+    if (pwd.length < 4) { alert("Şifre en az 4 karakter olmalıdır."); return; }
+    setBusy(true);
+    try {
+      await gsAdmin(token, "admin_addUser", {phone, fullName:newUser.fullName.trim(), role:newUser.role, password:pwd});
+      setNewUser({phone:"",fullName:"",password:"",role:"STAFF"});
+      await load();
+    } catch(e) { alert(e instanceof Error ? e.message : String(e)); }
+    setBusy(false);
   };
 
-  const toggleActive = u => {
-    if (u.id===authUser.id) { alert("Kendinizi devre dışı bırakamazsınız."); return; }
-    uUsers(users.map(x=>x.id!==u.id?x:{...x,active:!x.active}));
+  const delUser = async u => {
+    if (String(u.phone) === myPhone) { alert("Kendi hesabınızı silemezsiniz."); return; }
+    if (!window.confirm(`"${u.fullName || u.phone}" kullanıcısını silmek istiyor musunuz?`)) return;
+    setBusy(true);
+    try { await gsAdmin(token, "admin_deleteUser", {phone:u.phone}); await load(); }
+    catch(e) { alert(e instanceof Error ? e.message : String(e)); }
+    setBusy(false);
   };
 
-  const delUser = u => {
-    if (u.id===authUser.id) { alert("Kendinizi silemezsiniz."); return; }
-    if (!window.confirm(`"${u.name}" kullanıcısını silmek istiyor musunuz?`)) return;
-    uUsers(users.filter(x=>x.id!==u.id));
+  const saveEditUser = async () => {
+    if (!editUser) return;
+    if (editUser.newPw && editUser.newPw.length < 4) { alert("Yeni şifre en az 4 karakter olmalıdır."); return; }
+    setBusy(true);
+    try {
+      await gsAdmin(token, "admin_updateUser", {
+        phone: editUser.phone,
+        fullName: (editUser.fullName || "").trim(),
+        role: editUser.role,
+        ...(editUser.newPw ? {password: editUser.newPw} : {})
+      });
+      setEditUser(null);
+      await load();
+    } catch(e) { alert(e instanceof Error ? e.message : String(e)); }
+    setBusy(false);
   };
 
-  const changePw = () => {
+  const changePw = async () => {
     setPwErr("");
-    if (!pw.old||!pw.n1||!pw.n2) { setPwErr("Tüm alanları doldurun."); return; }
-    const me = users.find(u=>u.id===authUser.id);
-    if (me.password !== pw.old) { setPwErr("Mevcut şifre hatalı."); return; }
-    if (pw.n1 !== pw.n2) { setPwErr("Yeni şifreler eşleşmiyor."); return; }
     if (pw.n1.length < 4) { setPwErr("Şifre en az 4 karakter olmalı."); return; }
-    uUsers(users.map(u=>u.id===authUser.id?{...u,password:pw.n1}:u));
-    setPwModal(false); setPw({old:"",n1:"",n2:""}); alert("✅ Şifre güncellendi. Lütfen tekrar giriş yapın.");
-    onLogout();
-  };
-
-  const saveEditUser = () => {
-    if (!editUser.name.trim()||!editUser.username.trim()) { alert("Ad ve kullanıcı adı zorunludur."); return; }
-    const conflict = users.find(u=>u.username===editUser.username.trim()&&u.id!==editUser.id);
-    if (conflict) { alert("Bu kullanıcı adı zaten kullanılıyor."); return; }
-    uUsers(users.map(u=>u.id!==editUser.id?u:{...u,name:editUser.name.trim(),username:editUser.username.trim(),role:editUser.role,...(editUser.newPw?{password:editUser.newPw}:{})}));
-    setEditUser(null);
+    if (pw.n1 !== pw.n2) { setPwErr("Yeni şifreler eşleşmiyor."); return; }
+    setBusy(true);
+    try {
+      await gsAdmin(token, "admin_changeOwnPassword", {newPassword: pw.n1});
+      setPwModal(false); setPw({n1:"",n2:""});
+      alert("✅ Şifreniz güncellendi.");
+    } catch(e) { setPwErr(e instanceof Error ? e.message : String(e)); }
+    setBusy(false);
   };
 
   return (
     <div>
-      {/* Şifremi Değiştir */}
+      {/* Kendi hesabım */}
       <div style={{background:"#E8EFF7",borderRadius:12,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
         <div>
-          <div style={{fontWeight:700,color:C.p}}>👤 {(authUser && authUser.name)}</div>
-          <div style={{color:C.m,fontSize:12}}>@{(authUser && authUser.username)} · {(authUser && authUser.role)==="admin"?"Yönetici":"Kullanıcı"}</div>
+          <div style={{fontWeight:700,color:C.p}}>👤 {(authUser && authUser.name) || myPhone}</div>
+          <div style={{color:C.m,fontSize:12}}>{myPhone} · {roleLabel(authUser && authUser.role)}</div>
         </div>
         <Btn onClick={()=>setPwModal(true)} variant="ghost" size="sm">🔑 Şifremi Değiştir</Btn>
       </div>
 
-      {/* Kullanıcı Listesi — sadece admin */}
-      {isAdmin && (
-        <Card title="Kullanıcı Yönetimi">
-          {users.map(u=>(
-            <div key={u.id} style={{padding:"12px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-              <div>
-                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                  <span style={{fontWeight:700}}>{u.name}</span>
-                  <Badge color={u.role==="admin"?"warn":"primary"}>{u.role==="admin"?"Yönetici":"Kullanıcı"}</Badge>
-                  {u.active===false&&<Badge color="danger">Devre Dışı</Badge>}
-                  {u.id===authUser.id&&<Badge color="success">Siz</Badge>}
+      <Card title="Kullanıcı Yönetimi">
+        {list === null
+          ? <div style={{padding:16,color:C.m,fontSize:14}}>Kullanıcılar yükleniyor…</div>
+          : loadErr
+            ? <div style={{padding:16}}>
+                <div style={{color:C.err,fontSize:13,marginBottom:8}}>Liste alınamadı: {loadErr}</div>
+                <Btn onClick={load} variant="ghost" size="sm">🔄 Tekrar dene</Btn>
+              </div>
+            : <>
+                {list.map(u=>(
+                  <div key={u.phone} style={{padding:"12px 16px",borderBottom:`1px solid ${C.b}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                    <div>
+                      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                        <span style={{fontWeight:700}}>{u.fullName || u.phone}</span>
+                        <Badge color={isAdminRole(u.role)?"warn":"primary"}>{roleLabel(u.role)}</Badge>
+                        {String(u.phone)===myPhone && <Badge color="success">Siz</Badge>}
+                      </div>
+                      <div style={{color:C.m,fontSize:12,marginTop:2}}>📞 {u.phone}</div>
+                    </div>
+                    <div style={{display:"flex",gap:6}}>
+                      <Btn onClick={()=>setEditUser({phone:u.phone, fullName:u.fullName||"", role:isAdminRole(u.role)?"ADMIN":"STAFF", newPw:""})} variant="ghost" size="sm" disabled={busy}>✏️</Btn>
+                      {String(u.phone)!==myPhone && <Btn onClick={()=>delUser(u)} variant="danger" size="sm" disabled={busy}>🗑</Btn>}
+                    </div>
+                  </div>
+                ))}
+                {list.length===0 && <div style={{padding:16,color:C.m,fontSize:14}}>Henüz kullanıcı yok.</div>}
+
+                {/* Yeni kullanıcı */}
+                <div style={{padding:16}}>
+                  <div style={{fontWeight:700,color:C.p,fontSize:13,marginBottom:10}}>+ Yeni Kullanıcı</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                    <input value={newUser.phone}    onChange={e=>setNewUser(f=>({...f,phone:e.target.value}))}    placeholder="Kullanıcı adı (Telefon)"/>
+                    <input value={newUser.fullName} onChange={e=>setNewUser(f=>({...f,fullName:e.target.value}))} placeholder="Ad Soyad"/>
+                    <input value={newUser.password} onChange={e=>setNewUser(f=>({...f,password:e.target.value}))} placeholder="Şifre (en az 4 karakter)" type="password"/>
+                    <select value={newUser.role} onChange={e=>setNewUser(f=>({...f,role:e.target.value}))}>
+                      <option value="STAFF">Kullanıcı</option>
+                      <option value="ADMIN">Yönetici</option>
+                    </select>
+                  </div>
+                  <Btn onClick={addUser} variant="success" disabled={busy} style={{width:"100%",justifyContent:"center"}}>+ Kullanıcı Ekle</Btn>
                 </div>
-                <div style={{color:C.m,fontSize:12,marginTop:2}}>@{u.username}</div>
-              </div>
-              <div style={{display:"flex",gap:6}}>
-                <Btn onClick={()=>setEditUser({...u,newPw:""})} variant="ghost" size="sm">✏️</Btn>
-                <Btn onClick={()=>toggleActive(u)} variant={u.active===false?"success":"ghost"} size="sm">{u.active===false?"✅ Aç":"⏸ Kapat"}</Btn>
-                {u.id!==authUser.id&&<Btn onClick={()=>delUser(u)} variant="danger" size="sm">🗑</Btn>}
-              </div>
-            </div>
-          ))}
-          {/* Yeni kullanıcı */}
-          <div style={{padding:16}}>
-            <div style={{fontWeight:700,color:C.p,fontSize:13,marginBottom:10}}>+ Yeni Kullanıcı</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-              <input value={newUser.name}     onChange={e=>setNewUser(f=>({...f,name:e.target.value}))}     placeholder="Ad Soyad"/>
-              <input value={newUser.username} onChange={e=>setNewUser(f=>({...f,username:e.target.value}))} placeholder="Kullanıcı adı"/>
-              <input value={newUser.password} onChange={e=>setNewUser(f=>({...f,password:e.target.value}))} placeholder="Şifre" type="password"/>
-              <select value={newUser.role} onChange={e=>setNewUser(f=>({...f,role:e.target.value}))}>
-                <option value="user">Kullanıcı</option>
-                <option value="admin">Yönetici</option>
-              </select>
-            </div>
-            <Btn onClick={addUser} variant="success" style={{width:"100%",justifyContent:"center"}}>+ Kullanıcı Ekle</Btn>
-          </div>
-        </Card>
-      )}
+              </>
+        }
+      </Card>
 
       {/* Şifre değiştirme modal */}
-      <Modal open={pwModal} onClose={()=>{setPwModal(false);setPwErr("");setPw({old:"",n1:"",n2:""})}} title="Şifremi Değiştir">
-        <Field label="Mevcut Şifre">  <input type="password" value={pw.old} onChange={e=>setPw(p=>({...p,old:e.target.value}))} placeholder="Mevcut şifreniz"/></Field>
-        <Field label="Yeni Şifre">    <input type="password" value={pw.n1}  onChange={e=>setPw(p=>({...p,n1:e.target.value}))}  placeholder="Yeni şifre (en az 4 karakter)"/></Field>
+      <Modal open={pwModal} onClose={()=>{setPwModal(false);setPwErr("");setPw({n1:"",n2:""})}} title="Şifremi Değiştir">
+        <Field label="Yeni Şifre">    <input type="password" value={pw.n1} onChange={e=>setPw(p=>({...p,n1:e.target.value}))} placeholder="Yeni şifre (en az 4 karakter)"/></Field>
         <Field label="Yeni Şifre (Tekrar)"><input type="password" value={pw.n2} onChange={e=>setPw(p=>({...p,n2:e.target.value}))} placeholder="Yeni şifre tekrar"/></Field>
         {pwErr && <div style={{background:C.errb,color:C.err,borderRadius:8,padding:"8px 12px",fontSize:13,fontWeight:600,marginBottom:12}}>{pwErr}</div>}
         <div style={{display:"flex",gap:10}}>
-          <Btn onClick={changePw} variant="accent" style={{flex:1,justifyContent:"center"}}>Şifreyi Güncelle</Btn>
+          <Btn onClick={changePw} variant="accent" disabled={busy} style={{flex:1,justifyContent:"center"}}>Şifreyi Güncelle</Btn>
           <Btn onClick={()=>{setPwModal(false);setPwErr("");}} variant="ghost" style={{flex:1,justifyContent:"center"}}>İptal</Btn>
         </div>
       </Modal>
@@ -1020,19 +1097,19 @@ function SettingsUsers({ users, authUser, uUsers, onLogout }) {
       {/* Kullanıcı düzenleme modal */}
       <Modal open={!!editUser} onClose={()=>setEditUser(null)} title="Kullanıcıyı Düzenle">
         {editUser && <>
-          <Field label="Ad Soyad">         <input value={editUser.name}     onChange={e=>setEditUser(u=>({...u,name:e.target.value}))}     placeholder="Ad Soyad"/></Field>
-          <Field label="Kullanıcı Adı">   <input value={editUser.username} onChange={e=>setEditUser(u=>({...u,username:e.target.value}))} placeholder="Kullanıcı adı"/></Field>
+          <Field label="Kullanıcı Adı (Telefon)"><input value={editUser.phone} disabled style={{background:"#F0F0EC",color:C.m}}/></Field>
+          <Field label="Ad Soyad"><input value={editUser.fullName} onChange={e=>setEditUser(u=>({...u,fullName:e.target.value}))} placeholder="Ad Soyad"/></Field>
           <Field label="Yetki">
             <select value={editUser.role} onChange={e=>setEditUser(u=>({...u,role:e.target.value}))}>
-              <option value="user">Kullanıcı</option>
-              <option value="admin">Yönetici</option>
+              <option value="STAFF">Kullanıcı</option>
+              <option value="ADMIN">Yönetici</option>
             </select>
           </Field>
           <Field label="Yeni Şifre (boş bırakırsanız değişmez)">
             <input type="password" value={editUser.newPw||""} onChange={e=>setEditUser(u=>({...u,newPw:e.target.value}))} placeholder="Yeni şifre (opsiyonel)"/>
           </Field>
           <div style={{display:"flex",gap:10}}>
-            <Btn onClick={saveEditUser} variant="accent" style={{flex:1,justifyContent:"center"}}>Kaydet</Btn>
+            <Btn onClick={saveEditUser} variant="accent" disabled={busy} style={{flex:1,justifyContent:"center"}}>Kaydet</Btn>
             <Btn onClick={()=>setEditUser(null)} variant="ghost" style={{flex:1,justifyContent:"center"}}>İptal</Btn>
           </div>
         </>}
@@ -1663,7 +1740,7 @@ function Reports({ cx, tx, nav }) {
 }
 
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
-function Settings({ cfg, uCfg, onExport, onImport, authUser, onLogout }) {
+function Settings({ cfg, uCfg, onExport, onImport, authUser, token, onLogout }) {
   const [tab,       setTab]       = useState("svc");
   const [selSvcId,  setSelSvcId]  = useState((cfg.svc[0] && cfg.svc[0].id)||"");
   const [newSvcName,setNewSvcName]= useState("");
@@ -1675,8 +1752,6 @@ function Settings({ cfg, uCfg, onExport, onImport, authUser, onLogout }) {
   const isAdmin = authUser && ["admin","ADMIN"].includes(String(authUser.role));
 
   const selSvc = cfg.svc.find(s=>s.id===selSvcId) || cfg.svc[0];
-  const users  = cfg.users || DEFAULT_USERS;
-  const uUsers = newUsers => uCfg({...cfg, users:newUsers});
 
   const addSvc = () => {
     if (!newSvcName.trim()) return;
@@ -1723,7 +1798,7 @@ function Settings({ cfg, uCfg, onExport, onImport, authUser, onLogout }) {
       </div>
 
       <div style={{display:"flex", gap:2, marginBottom:16, background:"#E8E2D9", borderRadius:10, padding:3}}>
-        {[["svc","🧺 Hizmetler"],["users","👥 Kullanıcılar"],["gs","🔗 Sheets"],["backup","💾 Yedek"]].map(([k,l]) => (
+        {[["svc","🧺 Hizmetler"],...(isAdmin?[["users","👥 Kullanıcılar"]]:[]),["gs","🔗 Sheets"],["backup","💾 Yedek"]].map(([k,l]) => (
           <button key={k} onClick={()=>setTab(k)}
             style={{flex:1, padding:"8px 4px", borderRadius:8, border:"none", background:tab===k?C.s:"transparent", color:tab===k?C.p:C.m, fontWeight:700, fontSize:12, cursor:"pointer"}}>
             {l}
@@ -1816,8 +1891,8 @@ function Settings({ cfg, uCfg, onExport, onImport, authUser, onLogout }) {
         </div>
       )}
 
-      {tab === "users" && (
-        <SettingsUsers users={users} authUser={authUser} uUsers={uUsers} onLogout={onLogout}/>
+      {tab === "users" && isAdmin && (
+        <SettingsUsers authUser={authUser} token={token} onLogout={onLogout}/>
       )}
 
       {tab === "gs" && (
